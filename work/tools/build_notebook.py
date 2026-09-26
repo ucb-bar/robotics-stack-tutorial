@@ -20,8 +20,9 @@ Where this is not a transcription
 The page describes the flow in which the attendee joins `iiswc-robotics-tutorial`, holds
 a shared SSH key and reaches AWS through their card. The interface moved
 (TUTORIAL_INTERFACE_NOTES.md 4e, TUTORIAL_AUTH_TLS.md): the attendee opens JupyterLab on
-their own instance and the board connects to that instance. Steps 0.2, 0.4, 0.5 and 1.4
-are therefore written for the flow that exists rather than transcribed from the page.
+their own instance and the board connects to that instance. Steps 0.2, 0.5 and 1.4 are
+therefore written for the flow that exists rather than transcribed from the page, and the
+page's own "find your instance" step has no counterpart here at all.
 
 The notebook does not narrate that difference: an attendee needs the flow in front of
 them, not its history. The page is a separate repository and is edited separately.
@@ -78,7 +79,7 @@ def fixes_table(fixes) -> str:
 # ======================================================================================
 md("""# IISWC 2026 · Attendee bench card
 
-## Four units, one board, one terminal
+## Five units, in the order you run them
 
 Work down the page. Each step is a command, the output you should get, and what to do
 when you don't.
@@ -124,7 +125,7 @@ code("lab.board_status()")
 # ======================================================================================
 md("""---
 
-## Unit 0 · Start here — Get a shell, and find your instance
+## Unit 0 · Check your board, and its link to this instance
 
 **Runs on your board today.** Five short steps. Every unit after this assumes them.""")
 
@@ -156,11 +157,10 @@ md("""There are three answers, and it takes about three seconds:
 """ + fixes_table([
     ("`board offline (nothing is listening)`", "Your card has not connected yet. Read the OLED (0.1); power-cycle if `up M:SS` is frozen."),
     ("`board offline (tunnel is stale)`", "The card retries on its own — wait, and re-run this cell."),
-    ("`board path NOT BUILT (stub)`", "This instance has no `board_link.py`. Tell an instructor."),
     ("It stays offline after a power-cycle", "Tell an instructor. **Every instance-side unit below runs without a board.**"),
 ]))
 
-md("""### 0.3 Ask the board who it is
+md("""### 0.3 Read the board's status from Linux
 
 *On the board.* The same fields as the OLED, read from Linux. If the two disagree,
 trust this one.""")
@@ -195,11 +195,6 @@ that has not done a privileged read reports `-`.
         ("`soc_magic 0x5A5A0039`", "That is the trace bitstream. Units 1 and 2 need `0x5A5A0038`: reload the PL, no re-image."),
     ]))
 
-md("""### 0.4 Find your AWS instance
-
-You are on it. This notebook runs on your instance, so there is nothing to look up; the
-board's own address and seat are in the `status` reply above.""")
-
 md("""### 0.5 The verbs your card accepts
 
 *Reference.* These are all of them:
@@ -211,7 +206,7 @@ md("""### 0.5 The verbs your card accepts
 | `put`, `get` | a file in, a result out |
 | `bitstream` | load a PL variant |
 | `run` | one named lab step |
-| `camera`, `mic` | one capture |""")
+| `camera`, `mic` | one capture, where the hardware is fitted |""")
 code('lab.board("help")')
 md("""Expected:
 
@@ -222,24 +217,14 @@ md("""Expected:
             "bitstream", "run", "camera", "mic"],
   "max_put": 67108864,
   "max_get": 67108864
-}""", "json") + """
-
-Anything that is not one of those ten is refused:
-
-""" + fence("lab.board(\"id\")\n"
-             "  the card refused or failed: BoardError: unknown verb.\n"
-             "  Known: help ping status ls put get bitstream run camera mic") + """
-
-**`camera` and `mic` need hardware your card may not have.** On card 13, `camera`
-answers `this card carries no cam_snap guest` and `mic` answers `no capture`. Both are
-the correct answer for that card, and no unit below depends on either.""")
+}""", "json"))
 
 # ======================================================================================
 # Unit 1
 # ======================================================================================
 md("""---
 
-## Unit 1 · Zephyr and Chipyard: build on the cloud, run on your SoC
+## Unit 1 · Zephyr and Chipyard: build an image on the instance, run it on your SoC
 
 **Runs on your board today · needs the uplink.** Your card has no toolchain. Build the
 image on the instance, then load it on the board.""")
@@ -262,38 +247,13 @@ md("Expected, at the end:\n\n" + fence(
     "Memory region         Used Size  Region Size  %age Used\n"
     "             RAM:       69720 B       256 MB      0.03%"))
 code('lab.sh("ls -l ~/out/boot_info/zephyr/zephyr.bin")')
-md("Expected:\n\n" + fence("-rw-rw-r-- 1 ubuntu ubuntu 55536 ... zephyr.bin") + """
+md("Expected:\n\n" + fence("-rw-rw-r-- 1 ubuntu ubuntu 55536 ... zephyr.bin"))
 
-Build for `chipyard_pynqz1_all_f40`, never plain `chipyard_pynqz1`. The plain board has
-a different clock and the guest will not boot.
+md("""### 1.4 Upload the image to the PYNQ board and run it
 
-""" + fixes_table([
-    ("`west: command not found`", "`source /home/ubuntu/tut/env.sh`"),
-    ("CMake names a missing toolchain file", "The message is misleading: `ZEPHYR_SDK_INSTALL_DIR` points at another SDK."),
-    ("CMake cannot find a source under `samples/`", "The instance image is behind. Tell an instructor."),
-]))
-
-md("""### 1.3 Put it where the board will look
-
-*On the instance.* Nothing in the repository creates `~/pub/`, so make it yourself and
-copy the image in.""")
-code('''lab.sh("mkdir -p ~/pub && cp ~/out/boot_info/zephyr/zephyr.bin ~/pub/zephyr.bin && ls -l ~/pub/zephyr.bin")''')
-md("Expected:\n\n" + fence("-rw-rw-r-- 1 ubuntu ubuntu 55536 ... /home/ubuntu/pub/zephyr.bin") + """
-
-Or skip the directory: set `AWS_IMAGE=out/boot_info/zephyr/zephyr.bin` on the next
-command.""")
-
-md("""**What this costs the room.** Every byte the board pulls crosses one shared 2.4 GHz
-channel. The measured aggregate is 4.021 MiB/s for all thirty seats together, not per
-seat, because ten radios move what one radio moves (B170 / L412).""")
-code('lab.budget("Unit 1 image, whole", 55_536)')
-md("""`boot_info` is small enough to send whole. Unit 2's image is not — see below.""")
-
-md("""### 1.4 Pull it, load it, watch it run
-
-*On the board.* Push the image to the card, load the PL and start the guest, then read
-the console back.""")
-code('lab.board_put("/home/ubuntu/pub/zephyr.bin")')
+*On the board.* Upload the image you just built to the card, load the PL and start the
+guest, then read the console back.""")
+code('lab.board_put("/home/ubuntu/out/boot_info/zephyr/zephyr.bin")')
 md("""Expected. The md5 is computed on the card and is the one step 1.2 built, so a
 truncated push shows up here rather than as a dead guest:
 
@@ -349,20 +309,20 @@ zero console bytes may be the card rather than your build.""")
 # ======================================================================================
 md("""---
 
-## Unit 2 · ModelBlaster: a network compiled to kernels you can beat
+## Unit 2 · ModelBlaster: Compiling PyTorch Models to embedded Heterogeneous SoCs
 
-**No attendee steps yet.** Compile a PyTorch model to int8 kernels for this SoC, replace
-one, and check that the replacement is identical rather than merely faster.
+**Part runs today · on this instance.** Compile a PyTorch model to int8 kernels for this
+SoC, replace one, and check that the replacement is identical rather than merely faster.
 
-There is no attendee sequence: every ModelBlaster lab needs the bench-board lock, an
-18 GB toolchain and a repository checkout, and your card carries none of them. The one
-optional step below runs on this instance.""")
+Generating the kernels has no attendee sequence yet. What runs on your seat is the gate
+below, and it is how a replacement kernel is accepted: it compares every candidate
+against the shipping kernel over every shape and scale the decoder dispatches. Unit 4 is
+an LLM writing one of those replacements.""")
 
-md("""### 2.1 Optional: the kernel gate
+md("""### 2.1 Optional: run the kernel gate
 
-*On any clone of the repository, with gcc.* No board, no lock, no cross-compiler. It
-takes no arguments and exits with the number of failures. About three minutes on this
-instance, which is why it is optional.""")
+*On the instance, with gcc.* It takes no arguments and exits with the number of
+failures. About three minutes, which is why it is optional.""")
 code('''lab.sh("cd /home/ubuntu/tut && fpga/pynq-z2/modelblaster/kernels/pext_nl/test/b76_gate.sh",
        timeout=600)''')
 md("""**Expect a lot of `FAIL` lines, and expect the gate to pass anyway.** The gate
@@ -384,28 +344,12 @@ and `rc=0`. The full text is shipped beside this notebook, so you can compare wi
 spending the three minutes:""")
 code('print(open("assets/b76_gate.expected.txt").read())')
 
-md("""### What a ModelBlaster lab would have to move
-
-The artifact is the 66,982,840-byte image. At the room's measured aggregate that is
-eight minutes of the shared channel for thirty seats (B170 / L412, B173 / L413):""")
-code("""lab.budget("whole image, raw", 66_982_840)
-lab.budget("whole image, gzip -6", 56_070_472)
-lab.budget("kernel re-tune delta", 257_008)""")
-md("""260x, and exact rather than statistical: across a real kernel re-tune 65,465,456 B
-of object content is byte-identical and merely relocated, and no weight tensor changes a
-byte. The saving depends on the differ re-anchoring after `text` grows; a shift-blind
-4 KiB block diff calls 99.8 % of blocks changed.
-
-Not solved yet: `zstd`, `xdelta3` and `bsdiff` are all absent from the board rootfs.
-`libzstd` is present and python is 3.10.4, so `ctypes` against the library is the first
-thing to try. `gzip` is not a fallback here — 1.19x on this data.""")
-
 # ======================================================================================
 # Unit 3
 # ======================================================================================
 md("""---
 
-## Unit 3 · TACIT: every instruction the SoC retired, on one timeline
+## Unit 3 · TACIT: instruction-level tracing of two heterogeneous harts on one timeline
 
 **Part runs today.** A trace encoder in the Rocket core writes retired instructions to
 memory; a decoder turns them into a timeline.
@@ -430,15 +374,15 @@ offline copy in the room.
     ("The uplink is already down", "Borrow a neighbour's cached tab, or watch from the front."),
 ]))
 
-md("""### Extra — a capture to open in Perfetto
+md("""### Where the SoC spent its cycles, from a capture taken on silicon
 
-One capture taken on silicon is shipped beside this notebook, so the viewer you just
+*On the instance.* One capture is shipped beside this notebook, so the viewer you just
 cached has something to open.""")
 code("t = lab.unpack_trace()")
 md("""Expected: about 1.99 MB, 534,990 instructions, 2.021 bits per instruction, captured
-2026-09-16 on a Rocket SoC — not on your card, which carries `0x5A5A0038`.
+2026-09-16 on a Rocket SoC.
 
-Where the SoC spent its cycles, in Python rather than in the viewer:""")
+The same summary in Python, without leaving the notebook:""")
 code("lab.trace_summary(t)")
 md("""Expected, at the top:
 
@@ -458,16 +402,15 @@ right-click `rocket_tacit_trace.perfetto.json`, choose Download, and drag the fi
 the Perfetto tab you cached in 3.1.""")
 code("""lab.budget("trace, decoded JSON", 1_989_396)
 lab.budget("trace, gzip -9", 96_680)""")
-md("""20.6x, which is why a trace travels compressed and an image travels as a delta.
-Both are the same constraint: one shared channel at 4.021 MiB/s for the whole room.""")
+md("""20.6x, which is why a trace travels compressed: the room has one shared 2.4 GHz
+channel, 4.021 MiB/s measured for all thirty seats together (B170 / L412).""")
 
-md("""### Extra — two harts on one timeline (Lab B156, `L401`)
+md("""### Two heterogeneous harts on one timeline (Lab B156, `L401`)
 
 **Read-and-inspect, not runnable.** `scripts/90_b156_tacit_window.sh` needs the lowered
-SignDetLite tree and its eight replay frames, which were never curated: the checkpoint
-and calibration frames live in the archive rather than in git. It also needs a board and
-bitstream `0x5A5A0039`. **No cell here captures anything**, and the 45.7 MB merged trace
-is not shipped. What is shipped is the measured lane table the gates were computed from:
+SignDetLite tree, its eight replay frames and a board carrying bitstream `0x5A5A0039`,
+none of which is in this repository, and the 45.7 MB merged trace it produced is not
+shipped either. What is shipped is the measured lane table the gates were computed from:
 `assets/b156_lanes.json`, 9 KB.
 
 The two harts hold different extensions — hart 0 has the packed-SIMD path the convolution
@@ -507,17 +450,32 @@ rules at the right are where each lane's last `mb_pext_conv` frame ends.
 buffer from a window the lane worked through.""")
 
 # ======================================================================================
-# Unit 4
+# Units 4 and 5
 # ======================================================================================
 md("""---
 
-## Unit 4 · Scheduling across the machine, and asking a model to write the kernel
+## Unit 4 · Agentic Optimization in ModelBlaster
 
-**Part runs today · needs the uplink.** Three pieces. You run the scheduler; agentic
-code generation has no attendee flow, and RiskyBird is one or two boards shown from the
-front.""")
+**Part runs today · on this instance.** An LLM rewrites one int8 kernel for the board's
+MBP instructions, Spike scores every candidate bit-exact against the reference, and the
+board then runs the round's best kernel three ways — the reference, the new kernel, and
+the new kernel with MBP switched off — so the accelerator is priced apart from the
+rewritten loop.
 
-md("""### 4.1 Solve a real schedule on your instance
+This unit is its own pair of notebooks on your seat, `mb_lab.ipynb` and
+`mb_lab_solved.ipynb`. The solved copy redraws a complete run from the recorded runs
+shipped beside it: the LLM's rounds, the kernels it wrote, the conversation it had, and
+the verdict. It needs nothing but the seat. Running it live on your own board and LLM key
+is not ready yet.""")
+
+md("""---
+
+## Unit 5 · XPU-RT: Scheduling Multi-Model Workloads to Heterogeneous SoCs
+
+**Part runs today · on this instance.** You run the scheduler. RiskyBird, the robot these
+schedules are for, is one or two boards shown from the front.""")
+
+md("""### 5.1 Solve a real schedule on your instance
 
 *On the instance.* XPU-RT places every operator of a network onto the devices of a
 heterogeneous machine. Eight dispatches, solved to optimality in under a second.""")
@@ -541,14 +499,12 @@ md("""And the schedule it found — every operator placed on a device of the mac
 code("""from IPython.display import Image
 Image(filename=os.path.join(root, "plots/networks_b154_gate_cpsat_profiled.png"))""")
 md(fixes_table([
-    ("`RuntimeError: no interpreter with ortools found`", "Re-run with the `source` line included."),
-    ("Two runs, two different makespans", "`XPURT_CPSAT_WORKERS=1` is not set."),
-    ("Nothing in the log for minutes", "Normal: Python buffers to the file. Check CPU time; `ps -C python3` matches nothing."),
+    ("Nothing in the log for minutes", "Normal: Python buffers its output. The solve is under three seconds once it starts."),
 ]))
 
-md("""### 4.2 Two networks, two harts, one memory system (Lab B157, `L402`)
+md("""### 5.2 Two networks sharing two harts and one memory system (Lab B157, `L402`)
 
-4.1 scheduled eight dispatches. This is the same solver on the problem a robot actually
+5.1 scheduled eight dispatches. This is the same solver on the problem a robot actually
 has: a speech model that must finish, a detector that must not miss its frame, two harts
 that hold different instruction sets, and a memory system they share. SignDetLite is
 **periodic at 1000 ms** (1.00 fps, 4 instances); Moonshine is the non-periodic job
@@ -557,7 +513,7 @@ compact}.
 
 Everything below reads the committed golden — all 44 rows, the four refusals and the
 compaction table — so it needs no XPU-RT, no solve and no artifacts. Solving a cell
-yourself is 4.3.""")
+yourself is 5.3.""")
 code('''import json
 golden_path = lab.repo_file("expected/xpurt_coloc2m_b157.json")
 if golden_path is None:
@@ -621,24 +577,21 @@ illegal (warmbest is shorter in only one of four pairs), and the shortest Moonsh
 in all 44 cells, 3,272.91 ms, is valid. Invalidity is invisible in the makespan column,
 in either direction.""")
 
-md("""### 4.3 Solve one cell yourself
+md("""### 5.3 Solve one cell yourself
 
 *Optional, and it needs more than the repository.* The full 44-cell sweep is hours of
 CP-SAT; one heuristic cell is about half a minute and reproduces its golden row exactly.
 
 You need an XPU-RT checkout (`XPURT_ROOT`) and an interpreter with `ortools`
-(`XPURT_PY`), neither of which is vendored here. Without them, 4.2 already carries the
+(`XPURT_PY`), neither of which is vendored here. Without them, 5.2 already carries the
 whole result.
 
-The sweep as shipped will not produce a schedule, and the reason is a path. It gives each
-cell a symlink farm of XPU-RT with this repository's data laid over it, and runs the solve
-inside that farm so the spec's relative paths resolve there. But
-`run_xpurt_schedule.py` takes its base path from **the script's own location** —
-`abspath(script_dir/..)` — not from the working directory. Invoking
-`$XPURT_ROOT/scripts/run_xpurt_schedule.py` therefore makes the base path the XPU-RT
-checkout, where the data is not, and every network fails with `dispatch_deps_path not
-found at ''`. Measured on a tutorial instance, 2026-09-24. The sweep exits 0 either way,
-so check the cell, not the exit code.""")
+The sweep as shipped does not produce a schedule. It gives each cell a symlink farm of
+XPU-RT with this repository's data laid over it and solves inside that farm, but
+`run_xpurt_schedule.py` takes its base path from the script's own location rather than
+from the working directory, so the solve looks for the data in the XPU-RT checkout and
+every network fails with `dispatch_deps_path not found at ''`. The sweep exits 0 either
+way, so read the cell's output and not the exit code.""")
 code('''import os, glob
 sweep = lab.repo_file("scripts/12_xpurt_coloc_sweep.sh")
 root, py = os.environ.get("XPURT_ROOT"), os.environ.get("XPURT_PY")
@@ -647,7 +600,7 @@ if not sweep:
     print("STUB: no scripts/12_xpurt_coloc_sweep.sh in this checkout -- nothing was run.")
 elif not (root and py and os.path.isdir(root) and os.access(py, os.X_OK)):
     print("Not run: set XPURT_ROOT to an XPU-RT checkout and XPURT_PY to an "
-          "interpreter that has ortools. 4.2 above needs neither.")
+          "interpreter that has ortools. 5.2 above needs neither.")
 else:
     repo = sweep.parent.parent
     lab.sh(f"cd {repo} && STAGE=heur POLICIES=fifo CONT_ARMS=none COMPACT_ARMS=plain "
@@ -678,7 +631,7 @@ code('''if cell_dir and os.path.isdir(cell_dir):
     print(f'golden says moonshine_end_ms={row["moonshine_end_ms"]}, '
           f'late_detector_dispatches={row["late_detector_dispatches"]}')
 else:
-    print("No cell farm to run in -- 4.2 carries the result without it.")''')
+    print("No cell farm to run in -- 5.2 carries the result without it.")''')
 md("""Expected, and it is the golden row to the digit:
 
 """ + fence("makespan_us=6339.28  op_deadline_miss=21 (dispatches, NOT instances)  "
@@ -686,8 +639,7 @@ md("""Expected, and it is the golden row to the digit:
             "golden says moonshine_end_ms=6339.28, late_detector_dispatches=21") + """
 
 Same interpreter, same spec and same data as the cell above it; only the path the script
-was named by differs. The fix belongs in `12_xpurt_coloc_sweep.sh`, which should invoke
-`$cell/scripts/run_xpurt_schedule.py`.""")
+was named by differs.""")
 
 nb = {
     "cells": cells,

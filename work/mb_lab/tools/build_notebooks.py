@@ -48,7 +48,7 @@ Run cells with **Shift-Enter**. How it works, in depth: `walkthroughs/` (left, i
 """
 
 ACCEL_MD = """
-## 1 · The accelerator, by hand
+## 1 · MBP.MAX8, by hand
 
 A 2×2 max pool outputs the largest of four neighbouring bytes. The plain C kernel does that one byte at a
 time: **118 cycles per output** on the board. MBP.MAX8 compares **eight pairs of bytes in one instruction**.
@@ -61,7 +61,7 @@ of eight int8 values (from -128 to 127), **predict** the answer, then run the ce
 """
 
 LLM_MD = """
-## 2 · Let the LLM do it, with your FPGA in the loop (5–8 minutes)
+## 2 · The LLM rewrites the kernel, with your FPGA in the loop (5–8 minutes)
 
 Each round, the LLM writes a few kernels. **Spike**, a simulator, checks each one and times it in seconds.
 Then the best one of the round is built for your board and **runs on your FPGA**, and the LLM is told the
@@ -72,7 +72,7 @@ is the same kernel with the accelerator switched off.
 """
 
 VERDICT_MD = """
-## 3 · Where did the speedup come from?
+## 3 · Where the speedup came from
 
 The verdict splits it in two: what the **rewritten loop** bought (the same kernel with MBP off, vs the
 reference), and what the **accelerator** bought (the same kernel with MBP on, vs off). Spike's number is
@@ -81,20 +81,20 @@ MAX8 makes the compute eight times denser, memory is what's left.
 """
 
 HOOD_MD = """
-### Under the hood
+### The tools, and every command the run executed
 
 The lab is the usual tools, run in order:
 - **ModelBlaster** turns the PyTorch model into an int8 graph and generates C kernels. With `--backend llm`
   it asks the LLM.
 - **Zephyr's `west`** builds the images.
 - **spike** simulates them.
-- The **board's agent** runs them on the FPGA, through its tunnel.
+- The **board's agent** runs them on the FPGA.
 
 Here is every command the run executed, exactly. Paste any of them into a terminal.
 """
 
 TURN_MD = """
-## 4 · Your turn: race the LLM (≈2 minutes per try)
+## 4 · Write the kernel yourself (≈2 minutes per try)
 
 `lab.start()` puts the unoptimized kernel in **`your-kernel/maxpool2d_s8.c`** (left, in the file browser). Its header has
 the rules and four hints: read one at a time. Edit, save with **Ctrl-S**, and run `lab.try_kernel()`. It checks

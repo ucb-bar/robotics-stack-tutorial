@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T08:54:57Z",
+  "generated_at": "2026-09-26T09:31:24Z",
   "generated_by": "content_validate.py",
-  "source_commit": "391513cb0f84",
-  "note": "mb_lab dependencies",
+  "source_commit": "27f8df1e7884",
+  "note": "unit 1 sources are public; pin advances to 5bb524cf",
   "files": [
     {
       "path": "work/README.md",
@@ -37,11 +37,11 @@
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 40883,
-      "sha256": "6e0478e4982cb29d1b4aad69a581a24cf5a091b1018cad70906eec2241d0626e",
-      "cells": 78,
+      "bytes": 36882,
+      "sha256": "64d7ce2b21ac11bbf5c4357c2876790fc8936e895ce15b009732065eb1ee4821",
+      "cells": 69,
       "nbformat": 4,
-      "source_chars": 26278,
+      "source_chars": 23735,
       "schema_checked": true
     },
     {
@@ -56,11 +56,11 @@
     },
     {
       "path": "work/mb_lab/mb_lab.ipynb",
-      "bytes": 9550,
-      "sha256": "5aaf0d2a470000bfb42477cc94841d12d726e33be0de280a1603432329f6e7fe",
+      "bytes": 9561,
+      "sha256": "3d36945dfdae5e94bb60d65176cca71326e2855edc798304393b4afe4291fcf8",
       "cells": 24,
       "nbformat": 4,
-      "source_chars": 5682,
+      "source_chars": 5693,
       "schema_checked": true
     },
     {
@@ -70,11 +70,11 @@
     },
     {
       "path": "work/mb_lab/mb_lab_solved.ipynb",
-      "bytes": 7948,
-      "sha256": "64dd3eef1c5e1f412044c3c0c5883bc25797da0e799da5ffebfdd47a49d4e064",
+      "bytes": 7959,
+      "sha256": "82f23406e4951fe08e8c82d5716d047a0dcc14de7943dc1b4022e3ed801e8a61",
       "cells": 18,
       "nbformat": 4,
-      "source_chars": 4816,
+      "source_chars": 4827,
       "schema_checked": true
     },
     {
@@ -104,8 +104,8 @@
     },
     {
       "path": "work/mb_lab/tools/build_notebooks.py",
-      "bytes": 10090,
-      "sha256": "e5b3fc929af470b0570adc22c7357ee9c433a5922617a2ee922b4fe738c07794"
+      "bytes": 10101,
+      "sha256": "17a765104eadf9db56cf4659aa4c9f93ec0a4bec77cf5063dbb4dabbf81f0e7e"
     },
     {
       "path": "work/mb_lab/tools/pack_solved_runs.py",
@@ -113,15 +113,20 @@
       "sha256": "a0de44395520545afb31771efbbe83d6853df5807fdbeab83b4d702667babc02"
     },
     {
+      "path": "work/rocket_tacit_trace.perfetto.json",
+      "bytes": 1989396,
+      "sha256": "a9a454746d51f78c5e412f4f8f83b8fbac97f2dccbfb83a2304bba01962bc16c"
+    },
+    {
       "path": "work/tools/build_notebook.py",
-      "bytes": 32342,
-      "sha256": "579e067b6847fa0a551d0be1aad126728756cf7583497dd4cdcf0267da0c83c0"
+      "bytes": 29674,
+      "sha256": "99dc3e2566c5480a25903d4b162511faf4b081402a2e0487343ee1a668bbe58e"
     }
   ],
   "repo": {
     "url": "https://github.com/ucb-bar/robotics-stack-tutorial.git",
     "ref": "main",
-    "commit": "080541cf7a91f74fde61ddf8df63110f56040fab",
+    "commit": "5bb524cfd836ce8b6838c944150663a212fb80e8",
     "mount": "repo",
     "guide": [
       [
