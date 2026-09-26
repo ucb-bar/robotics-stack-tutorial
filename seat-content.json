@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T07:45:46Z",
+  "generated_at": "2026-09-26T07:59:57Z",
   "generated_by": "content_validate.py",
-  "source_commit": "0b1af4b8c938",
-  "note": "carry the B183 notebook, and pin the source tree at 080541cf so ~/tut stops being six commits stale",
+  "source_commit": "2e60c166882a",
+  "note": "republish, to watch the fleet follow the branch with nobody touching a seat",
   "files": [
     {
       "path": "work/README.md",
