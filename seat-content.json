@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T08:42:58Z",
+  "generated_at": "2026-09-26T08:54:57Z",
   "generated_by": "content_validate.py",
-  "source_commit": "ca7df5d268cc",
-  "note": "lab.sh truncates long build output",
+  "source_commit": "391513cb0f84",
+  "note": "mb_lab dependencies",
   "files": [
     {
       "path": "work/README.md",
@@ -76,6 +76,16 @@
       "nbformat": 4,
       "source_chars": 4816,
       "schema_checked": true
+    },
+    {
+      "path": "work/mb_lab/mb_progress.py",
+      "bytes": 8270,
+      "sha256": "efe744b8838fda699ccd718841a616262cd2e067b0144592e5b84afdeb67d701"
+    },
+    {
+      "path": "work/mb_lab/mb_report.py",
+      "bytes": 10453,
+      "sha256": "fb591b6e80085d6746f5f64b5c584fe353a57d1a1b15da6691860c9074eaa569"
     },
     {
       "path": "work/mb_lab/seat/README.md",
