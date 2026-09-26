@@ -1,14 +1,14 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T07:28:28Z",
+  "generated_at": "2026-09-26T07:45:46Z",
   "generated_by": "content_validate.py",
-  "source_commit": "a42bfa228900",
-  "note": "the attendee notebooks, on the branch every seat fetches for itself",
+  "source_commit": "0b1af4b8c938",
+  "note": "carry the B183 notebook, and pin the source tree at 080541cf so ~/tut stops being six commits stale",
   "files": [
     {
       "path": "work/README.md",
-      "bytes": 8418,
-      "sha256": "94515f1e6379122aa5ae1715a9779b15c56763c619ba60d99cf2fde9552edec3"
+      "bytes": 8986,
+      "sha256": "1c4a6ca81d2286f86e4e214a7e0a1cb82e479b1513fb5643eff79fe1add7de1e"
     },
     {
       "path": "work/assets/b156_lanes.json",
@@ -37,17 +37,73 @@
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 50484,
-      "sha256": "f42344cd13aa07a9ce36821f0c509fceb1680b6f295fcdf096524d2f49ec6a7c",
-      "cells": 81,
+      "bytes": 40883,
+      "sha256": "6e0478e4982cb29d1b4aad69a581a24cf5a091b1018cad70906eec2241d0626e",
+      "cells": 78,
       "nbformat": 4,
-      "source_chars": 34078,
+      "source_chars": 26278,
       "schema_checked": true
     },
     {
       "path": "work/tools/build_notebook.py",
-      "bytes": 41342,
-      "sha256": "9daf1b149ad46082d3665a31e3d3449f1df5baa74240ec5d585196fd681b1c92"
+      "bytes": 32342,
+      "sha256": "579e067b6847fa0a551d0be1aad126728756cf7583497dd4cdcf0267da0c83c0"
     }
-  ]
+  ],
+  "repo": {
+    "url": "https://github.com/ucb-bar/robotics-stack-tutorial.git",
+    "ref": "main",
+    "commit": "080541cf7a91f74fde61ddf8df63110f56040fab",
+    "mount": "repo",
+    "guide": [
+      [
+        "scripts",
+        "every numbered lab script, in the order the tutorial runs them -- start here when you want to know what a cell actually did"
+      ],
+      [
+        "fpga/pynq-z2/modelblaster",
+        "the compiler and runtime that lower a network onto the board: the IR, the passes, the scheduler's input"
+      ],
+      [
+        "fpga/pynq-z2/modelblaster/kernels",
+        "the int8 kernels the accelerator really runs, in C, one directory per target (pext, pext_nl, roccmoon)"
+      ],
+      [
+        "fpga/pynq-z2/host",
+        "the host side the notebook calls: bitstream load, clocks, the board drivers"
+      ],
+      [
+        "fpga/pynq-z2/sw",
+        "the bare-metal C that runs on the Rocket core itself"
+      ],
+      [
+        "fpga/pynq-z2/src",
+        "the Verilog top level, and how the accelerator is wired to the core"
+      ],
+      [
+        "boards",
+        "the Chipyard board configuration this bitstream was elaborated from"
+      ],
+      [
+        "samples",
+        "the Zephyr applications on the board -- OLED, camera, boot info"
+      ],
+      [
+        "zephyr-chipyard-sw",
+        "the Zephyr workspace and the XPU-RT scheduler.  Large: a built toolchain lives under tools/, so browse zephyr_ws/ and not the toolchain"
+      ],
+      [
+        "expected",
+        "the golden outputs a gate compares against -- what 'correct' is defined to be"
+      ],
+      [
+        "docs",
+        "the design notes and the reproduction guides"
+      ],
+      [
+        "patches",
+        "what had to be changed in upstream projects to make this stack build"
+      ]
+    ]
+  }
 }

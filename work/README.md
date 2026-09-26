@@ -17,13 +17,14 @@ here rather than transcribed**, and `tools/build_notebook.py` says so at the top
 
 | step | on the page | in the notebook |
 |---|---|---|
-| 0.2 | `ssh -i <key> xilinx@10.42.0.N` from the room WiFi | the board finds you; `lab.board_status()` asks |
+| 0.2 | `ssh -i <key> xilinx@10.42.0.N` from the room WiFi | the board connects to the instance; `lab.board_status()` reports it |
 | 0.4 | the board looks up `aws-N.iiswc` | superseded — you are already on the instance |
 | 0.5 | the `aws_*.sh` relay, plus two fixes about the key's path and mode | the agent's ten verbs; no key fixes, because there is no key |
 | 1.4 | `aws_run.sh` — pull, load, console, in one | `board_put` → `run` → `get`, over the tunnel |
 
-0.4 and 0.5 keep a note explaining what they were and why they are gone: useful orientation
-for anyone who saw the page. It is only the *instructions to act* that were removed.
+**The notebook does not narrate the divergence to the attendee** (B183): 0.4 is one line
+saying they are already on the instance, and 0.5 lists the verbs the card accepts. An
+attendee needs the flow in front of them, not its history.
 
 **The page needs the same correction and has not had it.** It lives in a different
 repository (`/scratch/dima/iiswc-site`) and this lab did not edit it. The problem is bigger
@@ -47,6 +48,13 @@ in `fpga/pynq-z2/host/`, and the key is a credential.
 ```bash
 python3 notebooks/tools/build_notebook.py     # regenerate after editing the generator
 ```
+
+**Prose rules for that file** (B183, after a rewrite that cut 27 % of the words): ordinary
+sentences of varying length; the command, and what the screen should say. Explain the
+technical content — the two harts and their extensions, what the trace encoder records,
+what the solver optimises — and delete anything that explains the tutorial's own plumbing
+(tunnels, keys, why a board reconnects, why the page differs). Headings name the task.
+Statements of what does not work yet stay.
 
 ## The two helpers, and why there are exactly two
 

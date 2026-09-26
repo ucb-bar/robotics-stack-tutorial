@@ -15,33 +15,21 @@ Fidelity rules kept here on purpose:
     `lab.board` on the card, and nothing at all where the page says the step
     happens at the glass or on a laptop.
 
-=================================================================================================
-THIS IS NO LONGER A PURE TRANSCRIPTION, AND THE DIVERGENCE IS DELIBERATE
-=================================================================================================
-The page describes the flow where the attendee joins `iiswc-robotics-tutorial`, holds the
-shared SSH key, opens a shell on their card, and has the CARD relay to AWS.  The interface
-moved (TUTORIAL_INTERFACE_NOTES.md 4e, TUTORIAL_AUTH_TLS.md): the attendee now opens
-JupyterLab on their own instance over their own internet with one shared passphrase, holds
-no key, never types `ssh`, and the BOARD dials in to them.
+Where this is not a transcription
+---------------------------------
+The page describes the flow in which the attendee joins `iiswc-robotics-tutorial`, holds
+a shared SSH key and reaches AWS through their card. The interface moved
+(TUTORIAL_INTERFACE_NOTES.md 4e, TUTORIAL_AUTH_TLS.md): the attendee opens JupyterLab on
+their own instance and the board connects to that instance. Steps 0.2, 0.4, 0.5 and 1.4
+are therefore written for the flow that exists rather than transcribed from the page.
 
-So these steps are re-expressed here and are NOT the page's text:
+The notebook does not narrate that difference: an attendee needs the flow in front of
+them, not its history. The page is a separate repository and is edited separately.
 
-    0.2   was `ssh -i <key> xilinx@10.42.0.N` from a laptop on the room network.
-          Now: the board finds you, and `lab.board_status()` is how you ask.
-    0.4   was the board looking up `aws-N.iiswc` to find its instance.
-          Now: superseded -- you are already on the instance.  Kept as orientation.
-    0.5   was the `/opt/iiswc/host/aws_*.sh` relay scripts and two fixes about the
-          shared key's path and mode.  Now: the agent's ten verbs.  The key fixes are
-          gone because the attendee is not given a key.
-    1.4   was `aws_run.sh`, one command doing pull+load+console on the board.
-          Now: `board_put` then `run` then `get`, over the tunnel.
-
-***THE PAGE NEEDS THE SAME CORRECTION AND HAS NOT HAD IT.***  It is in a different
-repository (`/scratch/dima/iiswc-site`) and was not edited by this lab.  More than step 0.2
-is affected: the page is served from the router at 10.42.0.1 and is written to survive the
-uplink dying, which assumes an attendee ON the room network -- under 4e nobody is, so the
-page's delivery mechanism is superseded along with its step 0.2.  That is a decision for
-whoever owns the page, not something to paper over here.
+Prose style, and the reason this file is the place to fix prose: ordinary sentences, the
+command, and what the screen should say. Explain the technical content -- the two harts
+and their extensions, what the trace encoder records, what the solver optimises -- and
+not how the tutorial's own plumbing is arranged.
 """
 import json
 from pathlib import Path
@@ -96,48 +84,24 @@ Work down the page. Each step is a command, the output you should get, and what 
 when you don't.
 
 *The page's commands and quoted outputs were executed on 2026-09-23 on bench card
-`pynq-2`. The board outputs in this notebook were re-run on 2026-09-24 through the
-tunnel, on card `pynq-13`, and are quoted from those runs.*
+`pynq-2`. The board outputs in this notebook were re-run on 2026-09-24 on card
+`pynq-13` and are quoted from those runs.*
 
 ---
 
-### How you got here, and what you will never be asked to do
-
-You opened this notebook on **your own instance**, over your own internet, with **one
-shared passphrase**. That is the whole access story:
-
-* you never join the room's WiFi;
-* you never hold an SSH key, and you never type `ssh`;
-* your board reaches *you*, by holding a tunnel open to this instance — so a card that
-  drops its WiFi reconnects on its own instead of killing your session.
-
-The published bench card still describes the older flow, where you sat on the room
-network and the board relayed for you. Where a step exists only because of that, this
-notebook says so instead of deleting it.
-
 ### Where each cell runs
 
-Two helpers, and the difference between them is the point of several units:
+| helper | runs on |
+|---|---|
+| `lab.sh("...")` | this instance |
+| `lab.board("verb")` | your card |
 
-| helper | runs on | when the thing it needs is missing |
-|---|---|---|
-| `lab.sh("...")` | this instance | fails like any command, with a timeout |
-| `lab.board("verb")` | your card, over its reverse tunnel | says `board offline` or `STUB` — it never invents output |
-
-Your card does not accept arbitrary commands. Its key carries a **forced command** with a
-fixed verb set — `ping status help ls put get bitstream run camera mic` — so that an
-instance someone else has broken into cannot get a shell on the board (B176). Where the
-page prints a board command, the notebook prints the verb that does the same thing.
-
-`lab.board_status()` answers in seconds. Re-run it whenever the card stops replying. It
-waits for the board's own SSH banner rather than trusting that the tunnel port is bound:
-that port belongs to *this instance's* sshd, which keeps accepting connections for a board
-that is already gone.""")
+`lab.board()` sends one of a fixed set of verbs to the card, listed in 0.5. Nothing
+else reaches it.""")
 
 md("""### Your seat
 
-Take it from the OLED: the last octet of `10.42.0.N`. The glass is the authority, not a
-printed list.
+Take it from the OLED: the last octet of `10.42.0.N`.
 
 | | |
 |---|---|
@@ -166,58 +130,42 @@ md("""---
 
 md("""### 0.1 Read the OLED
 
-*At the board · nothing to type.* `up M:SS` must be ticking: a frozen counter is a dead
-SoC, not a slow one.
+*At the board · nothing to type.* `up M:SS` counts from the SoC's last boot and must be
+ticking; a frozen counter means the SoC has stopped.
 
 Expected, on the glass:
 
 """ + fence("10.42.0.{N}\niiswc-robotics-tutorial\nup 4:17") + "\n\n" + fixes_table([
-    ("`up M:SS` is frozen", "Power-cycle. The glass holds a stale frame; it must restart at `up 0:00`."),
+    ("`up M:SS` is frozen", "Power-cycle. The counter should restart at `up 0:00`."),
     ("`NO ADDRESS`, or `wlan0 DOWN`", "Power-cycle. Nothing below works until the board has an address."),
-    ("Blank, and under two minutes", "Wait. Raising the network alone takes about 37 s."),
+    ("Blank, and under two minutes", "Wait. Bringing up the network takes about 37 s."),
 ]))
 
-md("""### 0.2 Your board finds you
+md("""### 0.2 Check your board is connected
 
-*Nothing to type, nothing to install.* You have no key, no SSH client and no way to reach
-a card directly — and you need none. Your board holds a tunnel open to **this** instance,
-so it arrives here by itself, and a card that drops its WiFi reconnects on its own instead
-of killing your session.
-
-> **The published bench card has a different step 0.2** — `ssh -i <key> xilinx@10.42.0.N`
-> from a laptop joined to the room's WiFi. That flow is gone: attendees no longer join the
-> room network and are no longer given a key. The page has not caught up yet; this notebook
-> is the flow that exists.
-
-The cell that answers *is my board there* is the one you already ran at the top, and it is
-the one to re-run whenever the card stops replying:""")
+*Nothing to type.* Your board connects to this instance by itself. `lab.board_status()`
+reports whether yours has; re-run it whenever the card stops replying:""")
 code("lab.board_status()")
-md("""It answers in about three seconds and never hangs. There are three answers:
+md("""There are three answers, and it takes about three seconds:
 
 """ + fence(
     "board connected -- pynq-13, 10.42.0.13, PL operating, MAGIC -\n"
     "board offline (nothing is listening) -- ConnectionRefusedError ...\n"
     "board offline (tunnel is stale) -- the port is bound but nothing answered within 3s") + """
 
-> It waits for your card's own SSH banner rather than trusting that the tunnel port is
-> bound. That port belongs to *this instance's* sshd, which keeps accepting connections for
-> a board that is already gone — so "the port is open" and "the board is there" are
-> different questions, and only the second one is worth asking.
-
 """ + fixes_table([
-    ("`board offline (nothing is listening)`", "Your card has not dialled in. Read the OLED (0.1); power-cycle if `up M:SS` is frozen."),
-    ("`board offline (tunnel is stale)`", "A dead session still holds the port. The card retries by itself — wait, and re-run this cell."),
-    ("`board path NOT BUILT (stub)`", "This instance has no `board_link.py`. An instructor's problem, not yours; say so."),
-    ("It stays offline after a power-cycle", "Say so out loud. **Every instance-side unit below runs without a board.**"),
+    ("`board offline (nothing is listening)`", "Your card has not connected yet. Read the OLED (0.1); power-cycle if `up M:SS` is frozen."),
+    ("`board offline (tunnel is stale)`", "The card retries on its own — wait, and re-run this cell."),
+    ("`board path NOT BUILT (stub)`", "This instance has no `board_link.py`. Tell an instructor."),
+    ("It stays offline after a power-cycle", "Tell an instructor. **Every instance-side unit below runs without a board.**"),
 ]))
 
 md("""### 0.3 Ask the board who it is
 
-*On the board.* The same fields as the OLED, read from Linux. If they disagree, believe
-this.""")
+*On the board.* The same fields as the OLED, read from Linux. If the two disagree,
+trust this one.""")
 code('lab.board("status")')
-md("""Expected — the same fields the page prints, as the agent's JSON. Measured on card
-13 on 2026-09-24; yours says your own seat:
+md("""Expected. Measured on card 13 on 2026-09-24; yours reports your own seat:
 
 """ + fence("""{
   "ok": true,
@@ -238,49 +186,23 @@ md("""Expected — the same fields the page prints, as the agent's JSON. Measure
   "uptime_s": 51910
 }""", "json") + """
 
-`tunnel_unit: active` is the line with no equivalent on the page: it is your card saying
-it is holding the tunnel open to this instance. **`soc_magic: "-"` is not an error** — the
-number needs a privileged read and a card that has not done one reports `-`.
+**`soc_magic: "-"` is not an error.** Reading the number needs privilege, and a card
+that has not done a privileged read reports `-`.
 
 """ + fixes_table([
         ("`ipv4  NO ADDRESS`", "Back to 0.1."),
-        ("`PL` is anything but `operating`", "Power-cycle and let the boot service load the bitstream."),
-        ("`MAGIC  -`", "Harmless. Re-run under `sudo` for the number."),
-        ("`MAGIC 0x5A5A0039`", "The trace bitstream. Units 1 and 2 want `0x5A5A0038` — a PL reload, not a re-image."),
+        ("`pl_state` is anything but `operating`", "Power-cycle and let the boot service load the bitstream."),
+        ("`soc_magic 0x5A5A0039`", "That is the trace bitstream. Units 1 and 2 need `0x5A5A0038`: reload the PL, no re-image."),
     ]))
 
 md("""### 0.4 Find your AWS instance
 
-*On the board · needs the uplink.* The board derives its seat from its own address. You
-never type an IP.""")
-md("""> **This step is superseded by the interface, and deliberately kept here.** It exists
-> because the board had to find *you*. In this notebook the direction is reversed: you are
-> already on the instance, and the board dials in to it. The board's own view of its seat
-> is in the `status` reply above, under `ipv4` and `derives`.""")
-md("Expected:\n\n" + fence(
-    "this board is 10.42.0.{N}, so it is seat {N}\nseat {N}  aws-{N}.iiswc -> 54.x.x.x")
-   + "\n\n" + fence("tcp/22 open  SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.14") + """
+You are on it. This notebook runs on your instance, so there is nothing to look up; the
+board's own address and seat are in the `status` reply above.""")
 
-> `--check` logs nobody in. It proves egress works and sshd is listening.
+md("""### 0.5 The verbs your card accepts
 
-""" + fixes_table([
-    ("`aws-{N}.iiswc did not resolve`", "Room-wide, not yours: only the router at 10.42.0.1 serves `.iiswc` names. Say so out loud."),
-    ("Resolves, but `--check` times out", "The instance is down or the phonebook is stale. An instructor republishes it."),
-]))
-
-md("""### 0.5 The commands every unit uses
-
-*On the board · reference.* All of them live in `/opt/iiswc/host/`. The board dials out;
-AWS cannot reach in.
-
-| command | does |
-|---|---|
-| `aws_whoami.sh` | Which instance is mine. |
-| `aws_ssh.sh` | A shell there. `aws_ssh.sh -- uptime` runs one command; the `--` is required. |
-| `aws_push.sh` | Board to instance, md5-checked at both ends. |
-| `aws_pull.sh` | Instance to board. A name or an IP. |
-| `aws_run.sh` | Pull the image, load it, watch the console. |""")
-md("""In this notebook the verbs are the board's, not the board's view of AWS:
+*Reference.* These are all of them:
 
 | verb | does |
 |---|---|
@@ -289,10 +211,7 @@ md("""In this notebook the verbs are the board's, not the board's view of AWS:
 | `put`, `get` | a file in, a result out |
 | `bitstream` | load a PL variant |
 | `run` | one named lab step |
-| `camera`, `mic` | one capture |
-
-`aws_ssh.sh`, `aws_push.sh` and `aws_pull.sh` have no counterpart on purpose: they were the
-board reaching AWS, and the notebook is already there.""")
+| `camera`, `mic` | one capture |""")
 code('lab.board("help")')
 md("""Expected:
 
@@ -305,22 +224,15 @@ md("""Expected:
   "max_get": 67108864
 }""", "json") + """
 
-**Anything that is not one of those ten is refused**, and that is the point rather than a
-limitation — the key your instance holds carries a forced command, so an instance somebody
-else has broken into still cannot get a shell on your card:
+Anything that is not one of those ten is refused:
 
 """ + fence("lab.board(\"id\")\n"
              "  the card refused or failed: BoardError: unknown verb.\n"
              "  Known: help ping status ls put get bitstream run camera mic") + """
 
-**`camera` and `mic` need hardware your card may not have.** On card 13, `camera` answers
-`this card carries no cam_snap guest` and `mic` answers `no capture`. Both are the correct
-answer for that card, not a fault, and no unit below depends on either.
-
-The page's own fixes for this step were both about the shared SSH key — where it lives and
-what mode it is. **Neither can happen to you: you are not given a key**, and the credential
-this instance uses for the tunnel is installed before you sit down. If a board verb fails
-on a credential, it is an instructor's problem and not yours.""")
+**`camera` and `mic` need hardware your card may not have.** On card 13, `camera`
+answers `this card carries no cam_snap guest` and `mic` answers `no capture`. Both are
+the correct answer for that card, and no unit below depends on either.""")
 
 # ======================================================================================
 # Unit 1
@@ -329,26 +241,13 @@ md("""---
 
 ## Unit 1 · Zephyr and Chipyard: build on the cloud, run on your SoC
 
-**Runs on your board today · needs the uplink.** Your card is a runtime with no
-toolchain. Build on the instance, run on the silicon.""")
+**Runs on your board today · needs the uplink.** Your card has no toolchain. Build the
+image on the instance, then load it on the board.""")
 
 md("""### 1.1 Open a shell on your instance
 
-*On the board.* No argument: it asks `aws_whoami.sh`. The missing host-key warning is
-deliberate.
-
-""" + fence("/opt/iiswc/host/aws_ssh.sh", "bash") + """
-
-Expected:
-
-""" + fence("Welcome to Ubuntu 24.04 LTS ...\nubuntu@ip-192-168-0-205:~$") + """
-
-> **This notebook already is that shell.** Step 1.2 onward runs here.
-
-""" + fixes_table([
-    ("Anything about the seat or the name", "That is step 0.4, not this one."),
-    ("It drops after a few idle minutes", "Reconnect. The build is on the instance, not in your session."),
-]))
+This notebook is that shell. Step 1.2 onward runs here; if your browser disconnects,
+reconnect — the work runs on the instance, not in your session.""")
 
 md("""### 1.2 Build a Zephyr image for the Rocket SoC
 
@@ -365,41 +264,38 @@ md("Expected, at the end:\n\n" + fence(
 code('lab.sh("ls -l ~/out/boot_info/zephyr/zephyr.bin")')
 md("Expected:\n\n" + fence("-rw-rw-r-- 1 ubuntu ubuntu 55536 ... zephyr.bin") + """
 
-> The board name is load-bearing: `chipyard_pynqz1_all_f40`, never plain
-> `chipyard_pynqz1`. The wrong one boots dead.
+Build for `chipyard_pynqz1_all_f40`, never plain `chipyard_pynqz1`. The plain board has
+a different clock and the guest will not boot.
 
 """ + fixes_table([
     ("`west: command not found`", "`source /home/ubuntu/tut/env.sh`"),
-    ("CMake names a missing toolchain file", "It names the wrong thing: `ZEPHYR_SDK_INSTALL_DIR` points at another SDK."),
-    ("CMake cannot find a source under `samples/`", "The instance image is behind. Say so."),
+    ("CMake names a missing toolchain file", "The message is misleading: `ZEPHYR_SDK_INSTALL_DIR` points at another SDK."),
+    ("CMake cannot find a source under `samples/`", "The instance image is behind. Tell an instructor."),
 ]))
 
 md("""### 1.3 Put it where the board will look
 
-*On the instance.* `~/pub/` has no producer in the repository. This copy is the missing
-link.""")
+*On the instance.* Nothing in the repository creates `~/pub/`, so make it yourself and
+copy the image in.""")
 code('''lab.sh("mkdir -p ~/pub && cp ~/out/boot_info/zephyr/zephyr.bin ~/pub/zephyr.bin && ls -l ~/pub/zephyr.bin")''')
 md("Expected:\n\n" + fence("-rw-rw-r-- 1 ubuntu ubuntu 55536 ... /home/ubuntu/pub/zephyr.bin") + """
 
-> Or skip the directory: set `AWS_IMAGE=out/boot_info/zephyr/zephyr.bin` on the next
-> command.""")
+Or skip the directory: set `AWS_IMAGE=out/boot_info/zephyr/zephyr.bin` on the next
+command.""")
 
 md("""**What this costs the room.** Every byte the board pulls crosses one shared 2.4 GHz
-channel, and ten radios deliver what one radio delivers — 4.021 MiB/s for the whole room,
-not per seat (B170 / L412).""")
+channel. The measured aggregate is 4.021 MiB/s for all thirty seats together, not per
+seat, because ten radios move what one radio moves (B170 / L412).""")
 code('lab.budget("Unit 1 image, whole", 55_536)')
-md("""`boot_info` is small enough that it is not worth a delta. Unit 2's image is not — see
-below.
-
-*Nothing here is pre-seeded: the build above is 23 s cold on this instance, measured, so
-you are not waiting on anything.*""")
+md("""`boot_info` is small enough to send whole. Unit 2's image is not — see below.""")
 
 md("""### 1.4 Pull it, load it, watch it run
 
-*On the board.* One command: pull, load the PL, start the guest, read the console.""")
+*On the board.* Push the image to the card, load the PL and start the guest, then read
+the console back.""")
 code('lab.board_put("/home/ubuntu/pub/zephyr.bin")')
-md("""Expected — and the md5 is the one step 1.2 built, checked on the card rather than
-here, so a truncated push is an error there instead of a dead guest:
+md("""Expected. The md5 is computed on the card and is the one step 1.2 built, so a
+truncated push shows up here rather than as a dead guest:
 
 """ + fence("""{
   "ok": true,
@@ -422,9 +318,7 @@ md("""Expected, in about 40 s:
 The console is a result on the card. Fetch it:""")
 code('''c = lab.board("get", "console.out", binary=True, verbose=False)
 print(c.stdout.decode("utf-8", "replace") if c.ok else c)''')
-md("""Expected — **373 bytes, measured on card 13 on 2026-09-24**, the whole chain in one
-place: built on this instance, carried over the card's own tunnel, loaded into the PL, and
-read back off the guest's console.
+md("""Expected — 373 bytes, measured on card 13 on 2026-09-24:
 
 """ + fence(
     "*** Booting Zephyr OS build 4329bf61c4fe ***\n"
@@ -440,26 +334,15 @@ read back off the guest's console.
 `soc_magic=0x5A5A0038` is the bitstream Units 1 and 2 want. `nonce` is yours and will
 differ; the OLED restarts at `up 0:00`.
 
-For comparison, what the bench card prints when a person drives `aws_run.sh` by hand — the
-same four stages, with the relay the notebook no longer needs:
-
-""" + fence(
-    "==> 1/4  pull pub/zephyr.bin from aws-{N}.iiswc\n"
-    "    pulled pub/zephyr.bin  (55536 bytes, 1.612 s)\n"
-    "==> 2/4  check nobody else is reading the console\n"
-    "==> 3/4  load the PL and start the guest\n"
-    "==> 4/4  console\n"
-    "    2156 bytes of console in /home/xilinx/tutorial/console.out") + """
-
 """ + fixes_table([
-    ("`[fail] 0 console bytes`", "Stop and say so. Do not retry and do not reboot."),
-    ("The console is garbage characters", "Wrong clock: the guest was built for the wrong board. Rebuild for `chipyard_pynqz1_all_f40`."),
-    ("`another console reader is already on /dev/ttyPS1`", "Kill the PID it prints, never a pattern."),
-    ("Banner only, no `BI_` lines", "The reader started late. The full text is in `/home/xilinx/tutorial/console.out`."),
+    ("`console_bytes: 0`", "Stop and tell an instructor. Do not retry and do not reboot."),
+    ("The console is garbage characters", "The guest was built for the wrong board, so the clock is wrong. Rebuild for `chipyard_pynqz1_all_f40`."),
+    ("`another console reader is already on /dev/ttyPS1`", "Kill the PID it prints, not a name pattern."),
+    ("Banner only, no `BI_` lines", "The reader started late. The full text is in `console.out` on the card."),
 ]) + """
 
-> **Gap the page declares:** proven twice on the bench board, never yet on a card from
-> the imaging flow — so zero console bytes may be that, not you.""")
+This has run twice on the bench board and not yet on a card from the imaging flow, so
+zero console bytes may be the card rather than your build.""")
 
 # ======================================================================================
 # Unit 2
@@ -469,28 +352,24 @@ md("""---
 ## Unit 2 · ModelBlaster: a network compiled to kernels you can beat
 
 **No attendee steps yet.** Compile a PyTorch model to int8 kernels for this SoC, replace
-one, and prove it is identical rather than merely faster.
+one, and check that the replacement is identical rather than merely faster.
 
-> **Gap the page declares:** no attendee sequence yet — every ModelBlaster lab is
-> developer-facing (bench-board lock, 18 GB toolchain, repository checkout) and your card
-> carries none of it.
-
-Everything below is the one optional step the page does publish. There is no board step
-in this unit, and this notebook does not invent one.""")
+There is no attendee sequence: every ModelBlaster lab needs the bench-board lock, an
+18 GB toolchain and a repository checkout, and your card carries none of them. The one
+optional step below runs on this instance.""")
 
 md("""### 2.1 Optional: the kernel gate
 
-*On any clone of the repository, with gcc.* No board, no lock, no cross-compiler. Takes
-no arguments; exits with the number of failures.
-
-Takes about three minutes on this instance — it is optional for that reason.""")
+*On any clone of the repository, with gcc.* No board, no lock, no cross-compiler. It
+takes no arguments and exits with the number of failures. About three minutes on this
+instance, which is why it is optional.""")
 code('''lab.sh("cd /home/ubuntu/tut && fpga/pynq-z2/modelblaster/kernels/pext_nl/test/b76_gate.sh",
        timeout=600)''')
-md("""**Expect to see `FAIL` scroll past, a lot of it, and expect the gate to pass anyway.**
-The gate proves each route is live by running a *poisoned* copy of it and checking that the
-gate rejects the poison, so every `FAIL` line is a poisoned arm being caught. A passing
-run prints **26 `FAIL` lines and 260 `MISMATCH` lines**. What you compare against is the
-four gates passing and the verdict:
+md("""**Expect a lot of `FAIL` lines, and expect the gate to pass anyway.** The gate
+proves each route is live by running a *poisoned* copy of it and
+checking that the gate rejects the poison, so every `FAIL` line is a poisoned arm being
+caught. A passing run prints **26 `FAIL` lines and 260 `MISMATCH` lines**. What you
+compare against is the four gates and the verdict:
 
 """ + fence(
     "b76 permute gate:   ... max_abs_err=0 fails=0  PASS\n"
@@ -501,26 +380,25 @@ four gates passing and the verdict:
     "every shape and scale the decoder dispatches, and all ten new routes proved live by\n"
     "a poisoned arm that the same gate rejects.") + """
 
-and `rc=0`. The full text is shipped beside this notebook, so you can compare it without
+and `rc=0`. The full text is shipped beside this notebook, so you can compare without
 spending the three minutes:""")
 code('print(open("assets/b76_gate.expected.txt").read())')
 
-md("""### Why this unit moves nothing yet, and what it will cost when it does
+md("""### What a ModelBlaster lab would have to move
 
-The artifact a ModelBlaster lab has to move is the 66,982,840-byte image. At the room's
-measured aggregate that is eight minutes of a jammed channel for thirty seats, which is why
-the board half is not simply switched on (B170 / L412, B173 / L413):""")
+The artifact is the 66,982,840-byte image. At the room's measured aggregate that is
+eight minutes of the shared channel for thirty seats (B170 / L412, B173 / L413):""")
 code("""lab.budget("whole image, raw", 66_982_840)
 lab.budget("whole image, gzip -6", 56_070_472)
 lab.budget("kernel re-tune delta", 257_008)""")
-md("""260x, and exact rather than statistical: across a real kernel re-tune 65,465,456 B of
-object content is byte-identical and merely relocated — no weight tensor changes a byte.
-The saving depends entirely on the differ re-anchoring after `text` grows; a shift-blind
+md("""260x, and exact rather than statistical: across a real kernel re-tune 65,465,456 B
+of object content is byte-identical and merely relocated, and no weight tensor changes a
+byte. The saving depends on the differ re-anchoring after `text` grows; a shift-blind
 4 KiB block diff calls 99.8 % of blocks changed.
 
-> Open item, not solved: `zstd`, `xdelta3` and `bsdiff` are all absent from the board
-> rootfs. `libzstd` is present and python is 3.10.4, so `ctypes` against the library is the
-> first thing to try. `gzip` is not a fallback here — 1.19x on this data.""")
+Not solved yet: `zstd`, `xdelta3` and `bsdiff` are all absent from the board rootfs.
+`libzstd` is present and python is 3.10.4, so `ctypes` against the library is the first
+thing to try. `gzip` is not a fallback here — 1.19x on this data.""")
 
 # ======================================================================================
 # Unit 3
@@ -532,37 +410,35 @@ md("""---
 **Part runs today.** A trace encoder in the Rocket core writes retired instructions to
 memory; a decoder turns them into a timeline.
 
-> **Gap the page declares:** capture has no attendee sequence — your card carries
-> `0x5A5A0038`, TACIT needs `0x5A5A0039`, and the on-board decoder is not shipped. Shown
-> from the front.""")
+Capture has no attendee sequence: your card carries `0x5A5A0038`, TACIT needs
+`0x5A5A0039`, and the on-board decoder is not shipped. Capture is shown from the
+front.""")
 
 md("""### 3.1 Cache the trace viewer
 
-*On your laptop · do this first · needs the uplink.* Open it once, now, and let it finish
-loading.
+*On your laptop · do this first · needs the uplink.* Open it once, now, and let it
+finish loading.
 
 <https://ui.perfetto.dev>
 
 Expected: the Perfetto UI, with an **Open trace file** button in the left sidebar.
 
-> It runs in your browser afterwards, but the first load needs the internet. There is no
-> offline copy in the room.
+The first load needs the internet; after that it runs in your browser. There is no
+offline copy in the room.
 
 """ + fixes_table([
     ("The uplink is already down", "Borrow a neighbour's cached tab, or watch from the front."),
 ]))
 
-md("""### Extra — a capture to open in it
+md("""### Extra — a capture to open in Perfetto
 
-**Not on the attendee page.** The page is right that *capture* has no attendee sequence.
-This is the other half: one capture already taken on silicon, shipped beside this notebook,
-so the viewer you just cached has something to show.""")
+One capture taken on silicon is shipped beside this notebook, so the viewer you just
+cached has something to open.""")
 code("t = lab.unpack_trace()")
 md("""Expected: about 1.99 MB, 534,990 instructions, 2.021 bits per instruction, captured
-2026-09-16 on a Rocket SoC — **not on your card**, which carries `0x5A5A0038`.
+2026-09-16 on a Rocket SoC — not on your card, which carries `0x5A5A0038`.
 
-Now the question Perfetto answers visually, answered here in Python: where did the SoC
-actually spend its cycles?""")
+Where the SoC spent its cycles, in Python rather than in the viewer:""")
 code("lab.trace_summary(t)")
 md("""Expected, at the top:
 
@@ -572,31 +448,32 @@ md("""Expected, at the top:
     "__subdf3                        99,067   14.7%    1,146\n"
     "__mulsf3                        56,400    8.4%      600") + """
 
-Six of the top eight are `__muldf3`, `__subdf3`, `__mulsf3`, `__addsf3`, `__subsf3`,
-`__adddf3` — compiler soft-float. This core has no FPU, so a field-oriented-control loop
-written in `float` and `double` spends most of its instructions emulating arithmetic. That
-is what the timeline shows you and a profiler counter does not.
+Six of the top eight are `__muldf3`, `__subdf3`, `__mulsf3`, `__addsf3`, `__subsf3` and
+`__adddf3`: compiler soft-float. This core has no FPU, so a field-oriented-control loop
+written in `float` and `double` spends most of its retired instructions emulating
+arithmetic.
 
-**To open it in Perfetto:** in the JupyterLab file browser on the left, right-click
-`rocket_tacit_trace.perfetto.json` and choose Download, then drag the file into the
-Perfetto tab you cached in 3.1. The trace never leaves your instance until you ask for it.""")
+**To open the trace in Perfetto:** in the JupyterLab file browser on the left,
+right-click `rocket_tacit_trace.perfetto.json`, choose Download, and drag the file into
+the Perfetto tab you cached in 3.1.""")
 code("""lab.budget("trace, decoded JSON", 1_989_396)
 lab.budget("trace, gzip -9", 96_680)""")
-md("""20.6x, which is why a trace travels compressed and an image travels as a delta. Both
-numbers are the same constraint: one shared channel, 4.021 MiB/s for the whole room.""")
+md("""20.6x, which is why a trace travels compressed and an image travels as a delta.
+Both are the same constraint: one shared channel at 4.021 MiB/s for the whole room.""")
 
 md("""### Extra — two harts on one timeline (Lab B156, `L401`)
 
 **Read-and-inspect, not runnable.** `scripts/90_b156_tacit_window.sh` needs the lowered
-SignDetLite tree and its eight replay frames — that workstream (B144–B146) was never
-curated, and its checkpoint and calibration frames live in the archive rather than in git.
-It also needs a board and bitstream `0x5A5A0039`. **So there is no cell here that captures
-anything**, and the 45.7 MB merged trace is not shipped. What *is* shipped is the measured
-lane table the gates were computed from: `assets/b156_lanes.json`, 9 KB.
+SignDetLite tree and its eight replay frames, which were never curated: the checkpoint
+and calibration frames live in the archive rather than in git. It also needs a board and
+bitstream `0x5A5A0039`. **No cell here captures anything**, and the 45.7 MB merged trace
+is not shipped. What is shipped is the measured lane table the gates were computed from:
+`assets/b156_lanes.json`, 9 KB.
 
-The question the lab asked: the tutorial's TACIT centrepiece has to look like two busy
-harts, and the previous artefact did not. Can one bound make two workloads of very
-different per-unit cost run the whole window and stop together?""")
+The two harts hold different extensions — hart 0 has the packed-SIMD path the convolution
+kernels use, hart 1 is scalar — so the same frame costs them very different amounts of
+time. One wall clock bounds both lanes, and the question is whether both work through the
+whole window and stop together.""")
 code('''import json
 lanes = json.load(open("assets/b156_lanes.json"))
 for pid, lane in lanes["lanes"].items():
@@ -618,21 +495,16 @@ md("""Expected:
     "        in the model  75.8% of the window, spin/console/idle   6.1%\n\n"
     "model work on the two lanes ends 0.10 s apart = 0.7% of the window") + """
 
-**Against the artefact it replaced, both numbers moved by an order of magnitude.** Hart 0's
-share of the window inside the model went **4.2 % → 22.4 %**, and the instant the two lanes
-stop went from **43.75 s apart (79.5 % of the window)** to **0.10 s apart (0.7 %)** — one
-wall clock, 13.309 s from reset, 368,105 events. The two encoders close 94 and 248 cycles
-from the end of the traced window.""")
+One wall clock, 13.309 s from reset, 368,105 events. The two encoders close 94 and 248
+cycles from the end of the traced window.""")
 code("lab.b156_figure(lanes)")
-md("""Both lanes carry model work in every bucket after the boot, and the two dashed rules
-at the right are where each lane's last `mb_pext_conv` frame ends.
+md("""Both lanes carry model work in every bucket after the boot, and the two dashed
+rules at the right are where each lane's last `mb_pext_conv` frame ends.
 
-> **The measurement that changes how you size a buffer.** A *busy* hart 0 emits **0.0443
-> bytes per core cycle** (1.77 MB/s) against the **0.0084** the previous run measured —
-> **5.3×**, and in the direction that overruns. That earlier figure was a blend of work and
-> idle, because the lane idled for 80 % of that run: an idle lane's spin loop is cheap in
-> trace bytes. Never size a TACIT buffer from a rate measured over a window the lane did
-> not work through.""")
+**Sizing a trace buffer from this.** A busy hart 0 emits **0.0443 bytes per core cycle**
+(1.77 MB/s). The same lane measured over a run where it idled 80 % of the window gives
+**0.0084**, five times lower, because a spin loop is cheap in trace bytes. Size a TACIT
+buffer from a window the lane worked through.""")
 
 # ======================================================================================
 # Unit 4
@@ -641,26 +513,14 @@ md("""---
 
 ## Unit 4 · Scheduling across the machine, and asking a model to write the kernel
 
-**Part runs today · needs the uplink.** Three pieces at three stages of readiness. The
-scheduler is real and you run it.""")
+**Part runs today · needs the uplink.** Three pieces. You run the scheduler; agentic
+code generation has no attendee flow, and RiskyBird is one or two boards shown from the
+front.""")
 
 md("""### 4.1 Solve a real schedule on your instance
 
-*On the board, on the page — because the page drives the instance through the board.*
-XPU-RT places every operator onto the devices of a heterogeneous machine. Eight
-dispatches, provably optimal in under a second.
-
-The page's command is:
-
-""" + fence("""/opt/iiswc/host/aws_ssh.sh -- 'source /etc/profile.d/xpurt.sh && \\
-    cd $XPURT_ROOT && XPURT_CPSAT_WORKERS=1 $XPURT_PYTHON \\
-    scripts/run_xpurt_schedule.py \\
-      --networks-json data/toplevel/networks_b154_gate.json \\
-      --solver cpsat --profiled --cpsat-time-limit 60'""", "bash") + """
-
-The solve was always on the instance; only the `aws_ssh.sh --` relay is dropped here,
-because this notebook is already on the instance. The command inside the quotes is
-unchanged.""")
+*On the instance.* XPU-RT places every operator of a network onto the devices of a
+heterogeneous machine. Eight dispatches, solved to optimality in under a second.""")
 code('''lab.sh("""source /etc/profile.d/xpurt.sh && cd $XPURT_ROOT && \\
 XPURT_CPSAT_WORKERS=1 $XPURT_PYTHON scripts/run_xpurt_schedule.py \\
   --networks-json data/toplevel/networks_b154_gate.json \\
@@ -669,9 +529,9 @@ md("Expected, on the last line but one:\n\n" + fence(
     "makespan_us=237.87  op_deadline_miss=0 (dispatches, NOT instances)  cross_dev=0  solver_s=0.377")
    + """
 
-> 237.87 is measured on this silicon, so four vCPUs and a 48-core workstation return the
-> same figure. `makespan_us` is the invariant; `solver_s` is this machine's wall clock and
-> will differ.""")
+The operator durations are measured on this silicon, so `makespan_us` is 237.87 on four
+vCPUs and on a 48-core workstation alike. `solver_s` is this machine's wall clock and
+will differ.""")
 code("""import json, os
 root = os.environ.get("XPURT_ROOT", "/opt/xpurt/XPU-RT")
 m = json.load(open(os.path.join(
@@ -681,24 +541,21 @@ md("""And the schedule it found — every operator placed on a device of the mac
 code("""from IPython.display import Image
 Image(filename=os.path.join(root, "plots/networks_b154_gate_cpsat_profiled.png"))""")
 md(fixes_table([
-    ("`RuntimeError: no interpreter with ortools found`", "You dropped the `source`. It is not decoration."),
+    ("`RuntimeError: no interpreter with ortools found`", "Re-run with the `source` line included."),
     ("Two runs, two different makespans", "`XPURT_CPSAT_WORKERS=1` is not set."),
     ("Nothing in the log for minutes", "Normal: Python buffers to the file. Check CPU time; `ps -C python3` matches nothing."),
-]) + """
-
-> **Gaps the page declares:** agentic code generation has no attendee flow, and the
-> fusion-hint speed-up was withdrawn by its own authors. RiskyBird is a look, not a lab —
-> one or two boards in the room, shown from the front.""")
+]))
 
 md("""### 4.2 Two networks, two harts, one memory system (Lab B157, `L402`)
 
 4.1 scheduled eight dispatches. This is the same solver on the problem a robot actually
 has: a speech model that must finish, a detector that must not miss its frame, two harts
 that hold different instruction sets, and a memory system they share. SignDetLite is
-**periodic at 1000 ms** (1.00 fps, 4 instances); Moonshine is the non-periodic job measured
-around it. 44 cells: 9 heuristics + 2 CP-SAT paths × {none, dram} × {plain, compact}.
+**periodic at 1000 ms** (1.00 fps, 4 instances); Moonshine is the non-periodic job
+measured around it. 44 cells: 9 heuristics + 2 CP-SAT paths × {none, dram} × {plain,
+compact}.
 
-**Everything below reads the committed golden** — all 44 rows, the four refusals and the
+Everything below reads the committed golden — all 44 rows, the four refusals and the
 compaction table — so it needs no XPU-RT, no solve and no artifacts. Solving a cell
 yourself is 4.3.""")
 code('''import json
@@ -728,21 +585,22 @@ md("""Expected:
     "cpsat_dram_compact                3,992.30 ms   windows 4 of 4  PASSES\n\n"
     "cells 44 | dispatches per schedule 2,285 | machine overlaps 0"))
 code("lab.b157_figure(g)")
-md("""**The top panel is the lab.** Under measured DRAM contention CP-SAT lands Moonshine at
+md("""**The top panel.** Under measured DRAM contention CP-SAT lands Moonshine at
 5,412.25 ms, past the 4,000 ms reference. The left-shift compaction post-pass takes it to
 **3,992.30 ms — 1,419.95 ms recovered, with `op_deadline_miss_count` 0 in both**, so no
-detector frame was traded for it. On the uncontended arm the same pass is worth 376.15 ms.
+detector frame was traded for it. On the uncontended arm the same pass is worth
+376.15 ms.
 
-**The bottom panel is why you need the solver.** All 36 heuristic cells fail the real-time
-test, and they fail it in two different ways: the fastest (`heft` = `critical_path`,
-4,251.12 ms) misses three of the four detector windows, and `edf` — the only policy landing
-all four — ends 6,076.00 ms, 2,076 ms past the reference. Compaction recovers **0.000 ms
-and moves 0 of 2,285 dispatches in all 18 plain-vs-compact pairs**: a list scheduler already
-places each op at its earliest feasible instant, so there is nothing to left-shift. The pass
-only pays where a solver leaves joint idle.
+**The bottom panel is why the solver is needed.** All 36 heuristic cells fail the
+real-time test, and they fail it in two different ways: the fastest (`heft` =
+`critical_path`, 4,251.12 ms) misses three of the four detector windows, and `edf` — the
+only policy landing all four — ends at 6,076.00 ms, 2,076 ms past the reference.
+Compaction recovers **0.000 ms and moves 0 of 2,285 dispatches in all 18
+plain-vs-compact pairs**: a list scheduler already places each op at its earliest
+feasible instant, so there is nothing to left-shift. The pass only pays where a solver
+leaves joint idle.
 
-> Quote the three crossings together, so the middle one is not read as the machine's limit:
-> **0.25 fps heuristic · 1.0 fps achieved · 2.62 fps capacity.**""")
+The three rates together: **0.25 fps heuristic, 1.0 fps achieved, 2.62 fps capacity.**""")
 code('''for c in g["compaction"][:4]:
     print(f'{c["scheduler"]:<22} {c["contention"]:<5} '
           f'{c["recovered_ms"]:>10,.3f} ms  {c["dispatches_moved"]:>5,} moved  {c["result"]}')
@@ -751,36 +609,36 @@ for r in g["refused"]:
     print(f'  {r["scheduler"]} {r["contention"]}/{r["compaction"]}: '
           f'{r["exclusion_violations"]} exclusion violations, '
           f'withheld makespan {r["withheld_makespan_ms"]:,.2f} ms')''')
-md("""**The refusals are the part worth slowing down for.** Those four cells placed 74
-dispatches on machines their dispatch graph forbids — `linear_s8` on a core the graph marks
-infeasible, `permute4_s8` on the hart with no P-extension. **Both are an illegal instruction
-on silicon**, and nothing in the artifact reads as wrong: the emitted durations look
-ordinary. The cause is that this CP-SAT path builds its model from a context that never
-reads `infeasible_combinations`, so the forbidden cells arrive as cheap legal options.
+md("""Four cells placed 74 dispatches on machines their dispatch graph forbids —
+`linear_s8` on a core the graph marks infeasible, `permute4_s8` on the hart with no
+P-extension. **Both are an illegal instruction on silicon**, and nothing in the artifact
+reads as wrong: the emitted durations look ordinary. This CP-SAT path builds its model
+from a context that never reads `infeasible_combinations`, so the forbidden cells arrive
+as cheap legal options.
 
-> **And the lesson is not the one it looks like.** It is tempting to read the refusal as
-> having rescued the lab from a tempting answer. It did not: the invalid cells were **mostly
-> slower as well as illegal** — warmbest is shorter in only one of four pairs — and the
-> shortest Moonshine end in all 44 cells is 3,272.91 ms, which is **valid**. So refusing
-> them cost nothing. The real lesson is that **invalidity is invisible in the makespan
-> column, in either direction.**""")
+Refusing them cost nothing in makespan: the invalid cells were mostly slower as well as
+illegal (warmbest is shorter in only one of four pairs), and the shortest Moonshine end
+in all 44 cells, 3,272.91 ms, is valid. Invalidity is invisible in the makespan column,
+in either direction.""")
 
 md("""### 4.3 Solve one cell yourself
 
 *Optional, and it needs more than the repository.* The full 44-cell sweep is hours of
 CP-SAT; one heuristic cell is about half a minute and reproduces its golden row exactly.
 
-You need an XPU-RT checkout (`XPURT_ROOT`) and an interpreter with `ortools` (`XPURT_PY`) —
-neither is vendored here. Without them, 4.2 already carries the whole result.
+You need an XPU-RT checkout (`XPURT_ROOT`) and an interpreter with `ortools`
+(`XPURT_PY`), neither of which is vendored here. Without them, 4.2 already carries the
+whole result.
 
-**Read this before you read the output.** The sweep gives each cell a symlink farm of
-XPU-RT with this repository's data laid over it, and runs the solve inside that farm so the
-spec's relative paths resolve there. But `run_xpurt_schedule.py` takes its base path from
-**the script's own location** — `abspath(script_dir/..)` — and not from the working
-directory. Invoking `$XPURT_ROOT/scripts/run_xpurt_schedule.py` therefore makes the base
-path the XPU-RT checkout, where the data is not, and every network fails with
-`dispatch_deps_path not found at ''`. **Measured on a tutorial instance, 2026-09-24.**
-The sweep exits 0 either way, so check the cell, not the exit code.""")
+The sweep as shipped will not produce a schedule, and the reason is a path. It gives each
+cell a symlink farm of XPU-RT with this repository's data laid over it, and runs the solve
+inside that farm so the spec's relative paths resolve there. But
+`run_xpurt_schedule.py` takes its base path from **the script's own location** —
+`abspath(script_dir/..)` — not from the working directory. Invoking
+`$XPURT_ROOT/scripts/run_xpurt_schedule.py` therefore makes the base path the XPU-RT
+checkout, where the data is not, and every network fails with `dispatch_deps_path not
+found at ''`. Measured on a tutorial instance, 2026-09-24. The sweep exits 0 either way,
+so check the cell, not the exit code.""")
 code('''import os, glob
 sweep = lab.repo_file("scripts/12_xpurt_coloc_sweep.sh")
 root, py = os.environ.get("XPURT_ROOT"), os.environ.get("XPURT_PY")
@@ -827,10 +685,9 @@ md("""Expected, and it is the golden row to the digit:
             "cross_dev=1438  solver_s=0.484\n"
             "golden says moonshine_end_ms=6339.28, late_detector_dispatches=21") + """
 
-Same interpreter, same spec, same data as the cell above it — only the path the script was
-named by. **The fix belongs in `12_xpurt_coloc_sweep.sh`**, which should invoke
-`$cell/scripts/run_xpurt_schedule.py`; this notebook is not the right place to carry it
-permanently.""")
+Same interpreter, same spec and same data as the cell above it; only the path the script
+was named by differs. The fix belongs in `12_xpurt_coloc_sweep.sh`, which should invoke
+`$cell/scripts/run_xpurt_schedule.py`.""")
 
 nb = {
     "cells": cells,
