@@ -382,7 +382,13 @@ def verdict(run: str = "") -> None:
              tile("SLOWER on your FPGA", f"{ref / new:.2f}×", "correct, but the LLM got stuck: run go() again", BAD))
     if off:
         tiles += tile("from the accelerator", f"{off / new:.1f}×", "same code, MBP off vs on", FPGA)
-        tiles += tile("from the rewritten loop", f"{ref / off:.1f}×", "reference vs new code, no MBP")
+        # NOT "from the rewritten loop".  -DMB_PEXT_HW=0 keeps the kernel's packed 8-byte
+        # loads and swaps only mb_pext_max8 for its C model, so this arm prices the PACKED
+        # DATAFLOW with the SIMD emulated -- it is not the loop standing on its own.  The
+        # arm that would be is the same kernel with use_mbp forced to 0, and measured it is
+        # 0.97x: 3% SLOWER than the reference (L434).  Labelling this one "the loop" invites
+        # the reader to split the total into two independent wins, and it does not split.
+        tiles += tile("packed, SIMD emulated", f"{ref / off:.1f}×", "reference vs new code, MBP off")
     tiles += tile("spike predicted", f"{j.get('speedup', 0):.1f}×", "no memory timing", SPIKE)
     acc = (f"<span class='badge yes'>ON THE ACCELERATOR · {ops}</span>" if ops
            else "<span class='badge no'>NOT ON THE ACCELERATOR · plain RISC-V code</span>")

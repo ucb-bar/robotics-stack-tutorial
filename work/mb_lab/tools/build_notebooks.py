@@ -74,10 +74,14 @@ is the same kernel with the accelerator switched off.
 VERDICT_MD = """
 ## 3 · Where the speedup came from
 
-The verdict splits it in two: what the **rewritten loop** bought (the same kernel with MBP off, vs the
-reference), and what the **accelerator** bought (the same kernel with MBP on, vs off). Spike's number is
-higher than the board's. Spike charges one cycle per instruction and knows nothing about memory, and once
-MAX8 makes the compute eight times denser, memory is what's left.
+The verdict shows two arms of the same kernel: MBP **off**, where `mb_pext_max8` becomes its C model
+but the packed 8-byte loads remain, and MBP **on**. Read the first as *the packed dataflow with the SIMD
+emulated*, not as *the loop on its own* — the loop on its own is the same kernel with `use_mbp` forced to
+0, and measured on the bench board that arm is **0.97×**, three percent *slower* than the reference. So
+the win here is not two independent factors multiplied together; almost all of it is the instruction.
+
+Spike's number is higher than the board's. Spike charges one cycle per instruction and knows nothing
+about memory, and once MAX8 makes the compute eight times denser, memory is what's left.
 """
 
 HOOD_MD = """

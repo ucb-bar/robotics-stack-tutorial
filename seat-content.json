@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T16:47:11Z",
+  "generated_at": "2026-09-26T16:49:26Z",
   "generated_by": "content_validate.py",
-  "source_commit": "970fb69dfbf2",
-  "note": "Named helpers replace the ad-hoc parsing blocks in Units 2 and 3",
+  "source_commit": "179f7b0ca731",
+  "note": "Correct the speedup decomposition in the agentic optimization lab",
   "files": [
     {
       "path": "work/README.md",
@@ -66,25 +66,25 @@
     },
     {
       "path": "work/mb_lab/mb_lab.ipynb",
-      "bytes": 9561,
-      "sha256": "3d36945dfdae5e94bb60d65176cca71326e2855edc798304393b4afe4291fcf8",
+      "bytes": 9929,
+      "sha256": "5ad10a626f1d4f8545e7be07dfd77d7d395ce471ac28d80022b6e79a5fd9e871",
       "cells": 24,
       "nbformat": 4,
-      "source_chars": 5693,
+      "source_chars": 6022,
       "schema_checked": true
     },
     {
       "path": "work/mb_lab/mb_lab.py",
-      "bytes": 30265,
-      "sha256": "718025ba1cb06ddd08f58c2d363c7d7e498f1a290061dd1e70acc7fbd096c1a5"
+      "bytes": 30810,
+      "sha256": "bbdc92d59f86f8d8ad81f57e21d0c03c09ce10e36fc8f82cf88981e3f193c1c3"
     },
     {
       "path": "work/mb_lab/mb_lab_solved.ipynb",
-      "bytes": 7959,
-      "sha256": "82f23406e4951fe08e8c82d5716d047a0dcc14de7943dc1b4022e3ed801e8a61",
+      "bytes": 8327,
+      "sha256": "9d6dee8940301675243a38a18d2d111c4572141dacd831bcb8042be3ecc1b65a",
       "cells": 18,
       "nbformat": 4,
-      "source_chars": 4827,
+      "source_chars": 5156,
       "schema_checked": true
     },
     {
@@ -114,8 +114,8 @@
     },
     {
       "path": "work/mb_lab/tools/build_notebooks.py",
-      "bytes": 10101,
-      "sha256": "17a765104eadf9db56cf4659aa4c9f93ec0a4bec77cf5063dbb4dabbf81f0e7e"
+      "bytes": 10433,
+      "sha256": "ae3a55060dfb3c513e400edbfe537e5233a2b4d2ee6f35b981fdbaacad17d54f"
     },
     {
       "path": "work/mb_lab/tools/pack_solved_runs.py",
