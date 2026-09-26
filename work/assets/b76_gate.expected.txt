@@ -1,0 +1,17 @@
+# What `fpga/pynq-z2/modelblaster/kernels/pext_nl/test/b76_gate.sh` prints when it passes.
+# Captured 2026-09-24 on a tutorial instance (c6i.xlarge, Ubuntu 24.04, gcc). 184 s, rc=0.
+#
+# READ THIS FIRST: the run prints 26 lines ending in FAIL and 260 lines starting
+# MISMATCH, and that is CORRECT. The gate proves each route is live by also running a
+# POISONED copy of it and checking that the gate rejects the poison, so every FAIL line
+# is a poisoned arm being caught. What you compare against is the four gates passing
+# (each PASSes twice, 8 lines) and the final verdict.
+
+b76 permute gate: cases=6968 (runs-shaped 1536, stride-shaped 64, requant 32) bytes_compared=52347746 max_abs_err=0 fails=0  PASS
+b76 mul gate: cases=4487 bytes_compared=276260453 max_abs_err=0 fails=0  PASS
+b66 layernorm gate: cases=2450 (M=1: 2087, M>1: 363) bytes_compared=11557734 max_abs_err=0 fails=0  PASS
+b66 softmax gate: cases=4300 (M*K<1024: 2079, >=1024: 2221) bytes_compared=16826991 max_abs_err=0 fails=0  PASS
+
+B76 GATE PASSED: all four treatments byte-identical to the shipping kernels over
+every shape and scale the decoder dispatches, and all ten new routes proved live by
+a poisoned arm that the same gate rejects.

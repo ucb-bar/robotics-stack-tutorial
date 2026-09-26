@@ -1,0 +1,434 @@
+{
+  "trace": "/scratch/dima/iiswc-tutorial/out/b156_duo/trace.merged.perfetto.json",
+  "lanes": {
+    "0": {
+      "name": "hart 0 (BIG, MBP) signdet_live",
+      "events": 258393,
+      "distinct": 179,
+      "ts_min": 810675,
+      "ts_max": 532348187,
+      "first_ev": [
+        810675,
+        "z_prep_c"
+      ],
+      "last_ev": [
+        532348187,
+        "printk"
+      ],
+      "top": [
+        {
+          "name": "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+          "count": 30784,
+          "first": 87008202,
+          "last": 524121740
+        },
+        {
+          "name": "mb_pext_conv_pixel.constprop.0 [hw @0x8000190c]",
+          "count": 30784,
+          "first": 87008943,
+          "last": 524122062
+        },
+        {
+          "name": "arch_spin_relax",
+          "count": 17339,
+          "first": 4114982,
+          "last": 520251109
+        },
+        {
+          "name": "uart_sifive_poll_out",
+          "count": 9888,
+          "first": 1290240,
+          "last": 532345331
+        },
+        {
+          "name": "char_out",
+          "count": 9793,
+          "first": 1290105,
+          "last": 532345340
+        }
+      ],
+      "match": {
+        "mb_pext_conv": {
+          "count": 61568,
+          "first": 87008202,
+          "last": 524122062,
+          "names": 2
+        }
+      },
+      "buckets": [
+        {
+          "b": 0,
+          "total": 22531,
+          "top": [
+            [
+              "arch_spin_relax",
+              16966
+            ]
+          ]
+        },
+        {
+          "b": 1,
+          "total": 1264,
+          "top": [
+            [
+              "z_smp_current_get",
+              216
+            ]
+          ]
+        },
+        {
+          "b": 2,
+          "total": 10378,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              2368
+            ]
+          ]
+        },
+        {
+          "b": 3,
+          "total": 6704,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              2368
+            ]
+          ]
+        },
+        {
+          "b": 4,
+          "total": 6639,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              2368
+            ]
+          ]
+        },
+        {
+          "b": 5,
+          "total": 6866,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              2368
+            ]
+          ]
+        },
+        {
+          "b": 6,
+          "total": 8898,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              3499
+            ]
+          ]
+        },
+        {
+          "b": 7,
+          "total": 7247,
+          "top": [
+            [
+              "mb_pext_conv_pixel.constprop.0 [hw @0x8000190c]",
+              2657
+            ]
+          ]
+        },
+        {
+          "b": 8,
+          "total": 7502,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              2779
+            ]
+          ]
+        },
+        {
+          "b": 9,
+          "total": 8865,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              1727
+            ]
+          ]
+        },
+        {
+          "b": 10,
+          "total": 13348,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              3547
+            ]
+          ]
+        },
+        {
+          "b": 11,
+          "total": 15608,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              3829
+            ]
+          ]
+        },
+        {
+          "b": 12,
+          "total": 13348,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [hw @0x8000147c]",
+              3275
+            ]
+          ]
+        }
+      ],
+      "model_time_pct": 22.354699963301933,
+      "idle_time_pct": 53.91443191313278,
+      "leadin_buckets": 2,
+      "gap_runs": [],
+      "model_pct_per_bucket": [
+        0.0,
+        0.0,
+        22.42644019293628,
+        22.328969775698756,
+        22.334203004744705,
+        22.26010751444504,
+        25.87504853120675,
+        26.88530180551686,
+        26.902347040580196,
+        13.758868847694758,
+        40.392400847244005,
+        31.284427326725435,
+        35.720433221423924
+      ],
+      "model_first": 87008202,
+      "model_last": 524122062
+    },
+    "1": {
+      "name": "hart 1 (LITTLE, scalar) kws_live",
+      "events": 109712,
+      "distinct": 103,
+      "ts_min": 810674,
+      "ts_max": 532348033,
+      "first_ev": [
+        810674,
+        "boot_secondary_core"
+      ],
+      "last_ev": [
+        532348033,
+        "_isr_wrapper"
+      ],
+      "top": [
+        {
+          "name": "arch_spin_relax",
+          "count": 26553,
+          "first": 3913802,
+          "last": 520240844
+        },
+        {
+          "name": "__text_region_start",
+          "count": 4920,
+          "first": 6171377,
+          "last": 479965018
+        },
+        {
+          "name": "fe_log2_q8",
+          "count": 4840,
+          "first": 5667749,
+          "last": 479965161
+        },
+        {
+          "name": "z_smp_current_get",
+          "count": 2165,
+          "first": 1652400,
+          "last": 520322458
+        },
+        {
+          "name": "mb_pext_conv_gather.constprop.0 [sw @0x80007ffc]",
+          "count": 1916,
+          "first": 7155238,
+          "last": 519858353
+        }
+      ],
+      "match": {
+        "mb_pext_conv": {
+          "count": 3832,
+          "first": 7155238,
+          "last": 520251721,
+          "names": 2
+        },
+        "fe_log2_q8": {
+          "count": 4840,
+          "first": 5667749,
+          "last": 479965161,
+          "names": 1
+        }
+      },
+      "buckets": [
+        {
+          "b": 0,
+          "total": 27838,
+          "top": [
+            [
+              "arch_spin_relax",
+              26229
+            ]
+          ]
+        },
+        {
+          "b": 1,
+          "total": 5824,
+          "top": [
+            [
+              "__text_region_start",
+              738
+            ]
+          ]
+        },
+        {
+          "b": 2,
+          "total": 6424,
+          "top": [
+            [
+              "__text_region_start",
+              1640
+            ]
+          ]
+        },
+        {
+          "b": 3,
+          "total": 251,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [sw @0x80007ffc]",
+              102
+            ]
+          ]
+        },
+        {
+          "b": 4,
+          "total": 1569,
+          "top": [
+            [
+              "__text_region_start",
+              410
+            ]
+          ]
+        },
+        {
+          "b": 5,
+          "total": 1743,
+          "top": [
+            [
+              "__text_region_start",
+              410
+            ]
+          ]
+        },
+        {
+          "b": 6,
+          "total": 232,
+          "top": [
+            [
+              "mb_pext_conv_gather.constprop.0 [sw @0x80007ffc]",
+              104
+            ]
+          ]
+        },
+        {
+          "b": 7,
+          "total": 1433,
+          "top": [
+            [
+              "__text_region_start",
+              410
+            ]
+          ]
+        },
+        {
+          "b": 8,
+          "total": 1510,
+          "top": [
+            [
+              "__text_region_start",
+              410
+            ]
+          ]
+        },
+        {
+          "b": 9,
+          "total": 1094,
+          "top": [
+            [
+              "z_smp_current_get",
+              189
+            ]
+          ]
+        },
+        {
+          "b": 10,
+          "total": 2310,
+          "top": [
+            [
+              "__text_region_start",
+              410
+            ]
+          ]
+        },
+        {
+          "b": 11,
+          "total": 3482,
+          "top": [
+            [
+              "z_smp_current_get",
+              439
+            ]
+          ]
+        },
+        {
+          "b": 12,
+          "total": 1148,
+          "top": [
+            [
+              "z_smp_current_get",
+              215
+            ]
+          ]
+        }
+      ],
+      "model_time_pct": 75.79622714722485,
+      "idle_time_pct": 6.083325367916426,
+      "leadin_buckets": 0,
+      "gap_runs": [],
+      "model_pct_per_bucket": [
+        81.61432569767665,
+        44.74783090648934,
+        33.02973109772282,
+        93.47795469532059,
+        82.09784007004077,
+        75.24092915668943,
+        95.76266126034041,
+        80.06014777681558,
+        76.76027987156411,
+        96.46068354796384,
+        79.37544909986623,
+        75.28213320414261,
+        69.94018095540136
+      ],
+      "model_first": 7155238,
+      "model_last": 520251721
+    }
+  },
+  "ends_together_s": 0.096758525,
+  "ends_together_pct": 0.7270318726059043,
+  "gates": {
+    "busy_ok": true,
+    "ends_together_ok": true,
+    "failures": []
+  }
+}

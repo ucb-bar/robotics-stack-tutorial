@@ -1,0 +1,24 @@
+{
+  "file": "rocket_tacit_trace.perfetto.json.gz",
+  "what": "One TACIT capture, decoded to a Perfetto timeline.",
+  "captured": "2026-09-16T15:02:40-07:00",
+  "captured_on": "silicon -- Rocket SoC on a PYNQ-Z2 bench card",
+  "source": "fpga",
+  "board": "chipyard_pynqz1",
+  "sample": "samples/tacit_dma",
+  "bitstream_note": "TACIT needs MAGIC 0x5A5A0039; attendee cards carry 0x5A5A0038.",
+  "packets_decoded": 105894,
+  "instructions_decoded": 534990,
+  "bits_per_instruction": 2.021,
+  "trace_buffer_bytes": 135181,
+  "perfetto_begin_slices": 9839,
+  "distinct_slice_names": 42,
+  "uncompressed_bytes": 1989396,
+  "uncompressed_md5": "d1f45fc2cc6feba00c42deff6ab3d3d0",
+  "compressed_bytes": 96680,
+  "pins": {
+    "zephyr-chipyard-sw": "f92248ec1b4196d23b9173048a1788af25f80aa7",
+    "tacit-decoder": "34e54441b5f6ee534e98c84feb728ffd76077364"
+  },
+  "provenance": "out/rocket_tacit/ in this repository; run.json alongside it."
+}

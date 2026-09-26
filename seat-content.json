@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-26T07:28:28Z",
+  "generated_by": "content_validate.py",
+  "source_commit": "a42bfa228900",
+  "note": "the attendee notebooks, on the branch every seat fetches for itself",
+  "files": [
+    {
+      "path": "work/README.md",
+      "bytes": 8418,
+      "sha256": "94515f1e6379122aa5ae1715a9779b15c56763c619ba60d99cf2fde9552edec3"
+    },
+    {
+      "path": "work/assets/b156_lanes.json",
+      "bytes": 9098,
+      "sha256": "e7c61c7334b5aaed67d5b15848fb56c257f81507c17a0a4db958e12ab9a93523"
+    },
+    {
+      "path": "work/assets/b76_gate.expected.txt",
+      "bytes": 1213,
+      "sha256": "2354b40e559c7d6d3dbda41b560914518033ce0f282c817b98935f60dec4e554"
+    },
+    {
+      "path": "work/assets/rocket_tacit_trace.meta.json",
+      "bytes": 936,
+      "sha256": "1637539857a95adbb55cdb9b0cd86b646c30549cf9a3bf6cf9b29fc7c50133c9"
+    },
+    {
+      "path": "work/assets/rocket_tacit_trace.perfetto.json.gz",
+      "bytes": 96680,
+      "sha256": "34fabc700067b39c8ebb357c85642d6c4c976ae0b26dd1ca71f84634fdc815f3"
+    },
+    {
+      "path": "work/iiswc_lab.py",
+      "bytes": 23510,
+      "sha256": "ae675e236ea3eb043451a88d9bde3fff8c3b5becbe26e94d856bf76c82b7e6ca"
+    },
+    {
+      "path": "work/iiswc_tutorial.ipynb",
+      "bytes": 50484,
+      "sha256": "f42344cd13aa07a9ce36821f0c509fceb1680b6f295fcdf096524d2f49ec6a7c",
+      "cells": 81,
+      "nbformat": 4,
+      "source_chars": 34078,
+      "schema_checked": true
+    },
+    {
+      "path": "work/tools/build_notebook.py",
+      "bytes": 41342,
+      "sha256": "9daf1b149ad46082d3665a31e3d3449f1df5baa74240ec5d585196fd681b1c92"
+    }
+  ]
+}
