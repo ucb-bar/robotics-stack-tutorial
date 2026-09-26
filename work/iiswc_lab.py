@@ -678,6 +678,114 @@ def compare_backends(a: Lowering, b: Lowering,
 
 
 # --------------------------------------------------------------------------------------
+# Reading an LLM kernel-optimization run (Unit 4).
+#
+# The run directory is the whole record: what the model was asked, what it answered, what
+# each candidate scored on spike, and what the board measured.  These read it.
+# --------------------------------------------------------------------------------------
+MB_RUNS = Path.home() / "iiswc-tutorial" / "out" / "mb_lab"
+
+
+def mb_preflight() -> bool:
+    """What this seat needs to run the optimizer live, and which pieces it has.
+
+    Four separate things, because they fail separately and the message that says
+    "not provisioned" is useless when only one of them is missing.
+    """
+    checks = [
+        ("the model key", Path.home() / ".config/iiswc/bedrock.env",
+         "an instructor runs scripts/93_bedrock_key.sh distribute"),
+        ("the dev environment", Path.home() / ".config/iiswc/dev.env",
+         "an instructor runs scripts/96_seat_mb_setup.sh"),
+        ("the spike that knows MBP", Path.home() / "mb-tools/bin/spike",
+         "an instructor runs scripts/96_seat_mb_setup.sh"),
+        ("the optimizer", Path.home() / "iiswc-tutorial/scripts/95_mb_kernel_llm.sh",
+         "an instructor runs scripts/96_seat_mb_setup.sh"),
+    ]
+    ready = True
+    for name, path, fix in checks:
+        have = path.exists()
+        ready &= have
+        print(f"  {'yes' if have else 'NO ':<4} {name:<26} {path}")
+        if not have:
+            print(f"       {fix}")
+    print()
+    print("This seat can run the optimizer." if ready else
+          "This seat cannot run the optimizer live. The cells below read a finished run\n"
+          "instead, and every number in this unit came from one.")
+    return ready
+
+
+def mb_latest_run(name: str = "") -> Path | None:
+    """The run directory to read: one you name, else the most recent on this seat."""
+    if name:
+        p = MB_RUNS / name
+        return p if p.is_dir() else None
+    if (MB_RUNS / "latest").is_dir():
+        return (MB_RUNS / "latest").resolve()
+    runs = sorted((p for p in MB_RUNS.glob("*") if p.is_dir() and p.name != "latest"),
+                  key=lambda p: p.stat().st_mtime)
+    return runs[-1] if runs else None
+
+
+def show_search_shape(run: str | Path) -> None:
+    """How big the search was: rounds, phases, calls, and what each call cost.
+
+    Read from the run's own call log rather than from the flags, because the flags say
+    what was ASKED for and the log says what happened -- a round that found no
+    improvement stops early, and then the two disagree.
+    """
+    run = Path(run)
+    log = next((p for p in (run / "after/calls.jsonl", run / "llm-calls.jsonl") if p.exists()), None)
+    if log is None:
+        print(f"no call log under {run} -- this run did not call the model")
+        return
+    rows = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+    print(f"{len(rows)} calls to {rows[0].get('model', '?')}\n")
+    print(f"  {'call':>4}  {'round':>5}  {'phase':<26}{'in':>8}{'out':>7}{'s':>7}")
+    for i, r in enumerate(rows, 1):
+        print(f"  {i:>4}  {r.get('round', '?'):>5}  {str(r.get('phase', '')):<26}"
+              f"{r.get('input_tokens') or 0:>8,}{r.get('output_tokens') or 0:>7,}"
+              f"{r.get('latency_s') or 0:>7.1f}")
+    ti = sum(r.get("input_tokens") or 0 for r in rows)
+    to = sum(r.get("output_tokens") or 0 for r in rows)
+    print(f"\n  {'total':>4}{'':>9}{'':<26}{ti:>8,}{to:>7,}"
+          f"{sum(r.get('latency_s') or 0 for r in rows):>7.0f}")
+    errs = [r.get("error") for r in rows if r.get("error")]
+    print(f"  errors: {errs if errs else 'none'}")
+
+
+def show_board_feedback(run: str | Path) -> None:
+    """What the board told the model between rounds -- the hardware in the loop.
+
+    Spike scores every candidate and has no memory timing, so this file is the only
+    thing in the loop that knows what the silicon actually did.
+    """
+    run = Path(run)
+    fb = next((p for p in (run / "after/board_feedback.md", run / "fpga-feedback.md")
+               if p.exists()), None)
+    if fb is None:
+        print(f"no board feedback under {run} -- this run was scored on spike alone")
+        return
+    print(fb.read_text().rstrip())
+
+
+def show_llm_kernel(run: str | Path, around: str = "", lines: int = 22) -> None:
+    """The kernel the model wrote, as it was compiled.
+
+    Anchored on a line you name so the window lands on the loop rather than the
+    licence header; with no anchor it shows the top of the function.
+    """
+    run = Path(run)
+    cands = sorted(run.glob("after/round*.kernel.c")) or sorted(run.glob("**/cache/*.c"))
+    if not cands:
+        print(f"no kernel source under {run}")
+        return
+    src = cands[-1]
+    print(f"{src}\n")
+    show_source(src, around or "for (", lines=lines)
+
+# --------------------------------------------------------------------------------------
 # Reading a recorded board run (Unit 2).
 # --------------------------------------------------------------------------------------
 def show_board_provenance(board: dict, arm: str = "pext") -> None:
@@ -705,6 +813,38 @@ def show_board_arms(board: dict, fast: str = "pext", slow: str = "scalar") -> No
               f'{arm["custom0_instructions_in_elf"]:>3}   '
               f'output vs golden: {arm["gate"]["board_vs_golden_bytes_differ"]} of 192 bytes '
               f'differ, max |d| = {arm["gate"]["max_abs_err"]}')
+
+
+def show_board_verdict(run: str | Path) -> None:
+    """The three board arms of an optimizer run, and each arm's correctness gate.
+
+    Three images, one bitstream, same data: the reference kernel, the new kernel, and the
+    new kernel with the MBP instruction replaced by a C model of it.
+    """
+    run = Path(run)
+    jf = run / "board.json"
+    if not jf.exists():
+        print(f"no board.json under {run} -- this run was scored on spike alone")
+        return
+    b = json.loads(jf.read_text())
+    arms = b.get("arms", b)
+    print(f"{'arm':<10}{'cycles':>14}{'per output':>13}{'vs reference':>14}   correctness")
+    ref = None
+    for name in ("before", "after", "mbpoff"):
+        a = arms.get(name)
+        if not isinstance(a, dict):
+            continue
+        cyc = a.get("cycles", {}).get("median") if isinstance(a.get("cycles"), dict) else a.get("cycles")
+        per = a.get("cycles_per_output")
+        if cyc is None:
+            continue
+        if ref is None:
+            ref = cyc
+        gate = a.get("gate", {})
+        ok = gate.get("board_vs_golden_bytes_differ")
+        note = ("bit-exact" if ok == 0 else f"{ok} bytes differ") if ok is not None else "-"
+        print(f"{name:<10}{cyc:>14,}{(per if per else cyc):>13.1f}"
+              f"{ref / cyc:>13.2f}x   {note}")
 
 
 def show_model_shapes(asset: str = "moonshine_shape.json") -> None:

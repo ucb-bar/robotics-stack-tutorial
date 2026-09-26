@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T16:49:26Z",
+  "generated_at": "2026-09-26T17:15:02Z",
   "generated_by": "content_validate.py",
-  "source_commit": "179f7b0ca731",
-  "note": "Correct the speedup decomposition in the agentic optimization lab",
+  "source_commit": "6cc9af96b4d4",
+  "note": "Unit 4 runs the optimizer",
   "files": [
     {
       "path": "work/README.md",
@@ -42,16 +42,16 @@
     },
     {
       "path": "work/iiswc_lab.py",
-      "bytes": 45162,
-      "sha256": "da654e42f227798993995d47da5a6589227a1c7329629eb0304f6abadea31585"
+      "bytes": 51305,
+      "sha256": "4837cf9d2cfcb668939991ad2e4c5f3f349d550462042740753023c096c45d2e"
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 89722,
-      "sha256": "c9a2354a65b8112d3c1dfce6d2c71e75afadc3edf04bae7e80d4ed956ee92e94",
-      "cells": 129,
+      "bytes": 97081,
+      "sha256": "ae2e0dc8c4ac5a9124380bfd735208d54a1ebea59b5f5ffc207d0c75e9d76bec",
+      "cells": 148,
       "nbformat": 4,
-      "source_chars": 63182,
+      "source_chars": 67740,
       "schema_checked": true
     },
     {
@@ -124,8 +124,8 @@
     },
     {
       "path": "work/tools/build_notebook.py",
-      "bytes": 72056,
-      "sha256": "bded734da5f45303a1b85afaa49f9290b1a892cdfe0269963bcb884c7d6c4a4b"
+      "bytes": 76859,
+      "sha256": "26c611e059d07e03c681921c57702de679c45564e22029e84989935966aa204d"
     }
   ],
   "repo": {

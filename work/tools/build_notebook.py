@@ -1128,17 +1128,109 @@ md("""---
 
 ## Unit 4 · Agentic Optimization in ModelBlaster
 
-**Part runs today · on this instance.** An LLM rewrites one int8 kernel for the board's
-MBP instructions, Spike scores every candidate bit-exact against the reference, and the
-board then runs the round's best kernel three ways — the reference, the new kernel, and
-the new kernel with MBP switched off — so the accelerator is priced apart from the
-rewritten loop.
+**On this instance, and on your board.** Unit 2 compiled a network with kernels somebody
+wrote by hand. This unit replaces one of them with a kernel a language model writes,
+scores every candidate for correctness and speed, and then measures the survivor on your
+SoC.
 
-This unit is its own pair of notebooks on your seat, `mb_lab.ipynb` and
-`mb_lab_solved.ipynb`. The solved copy redraws a complete run from the recorded runs
-shipped beside it: the LLM's rounds, the kernels it wrote, the conversation it had, and
-the verdict. It needs nothing but the seat. Running it live on your own board and LLM key
-is not ready yet.""")
+The op is `maxpool2d_s8`. Its reference kernel compares one int8 at a time; the board can
+compare eight in one instruction (`MBP.MAX8`), and the only way to reach that instruction
+is to rearrange the loop so eight bytes line up in one register. That rearrangement is
+what the model is asked for.""")
+
+md("""### 4.1 The search, and what scores it
+
+Four things are worth knowing before you run it, because each one is a choice that
+changes the result.
+
+**Candidates are scored on Spike, not on your board.** A board run is a build, an upload
+and a boot; a Spike run is seconds. So the search happens on Spike and the board is used
+to measure what the search produced. The cost of that choice is real: Spike charges one
+cycle per instruction and models no memory at all, so it systematically *understates* a
+kernel that makes memory accesses fewer and wider — exactly what this kernel does.
+
+**Spike here is built with the MBP opcodes.** A stock Spike traps on `MBP.MAX8`. The one
+on your seat implements it, which is the only reason a candidate using the instruction can
+be scored at all.
+
+**Correct means three separate things**, and a candidate that fails any of them is
+discarded no matter how fast it is: ModelBlaster's own host verify at four shapes with
+random inputs, the Spike golden — one real tensor end to end — and a negative control that
+proves `custom-0` still traps on hart 1, so a passing run cannot be the hardware quietly
+doing nothing.
+
+**The board is in the loop, not just at the end.** After the first round the best kernel is
+built, run on your FPGA, and its measured cycles are appended to the next round's prompt.
+That is the only point in the loop that knows what silicon does.""")
+
+md("""### 4.2 Check your seat can reach the model
+
+The optimizer needs four things, and they arrive separately.""")
+code('''ready = lab.mb_preflight()''')
+md("""Expected on a provisioned seat: four `yes` lines. If any says `NO`, the rest of this
+unit reads a finished run instead of making one — every number below came from a run
+either way.""")
+
+md("""### 4.3 Run it
+
+One op, two rounds. The call budget is the whole cost control: the run stops at
+`--max-calls` whatever else happens.""")
+code('''if ready:
+    r = lab.sh("cd ~/iiswc-tutorial && . ~/.config/iiswc/dev.env && . ./env.sh && "
+               "./scripts/95_mb_kernel_llm.sh --op maxpool2d_s8 --where board --board-loop "
+               "--beam 2 --expansions 2 --rounds 2 --max-calls 8",
+               timeout=3600, head=0, tail=18)
+run = lab.mb_latest_run()
+print("reading", run)''')
+md("""Expected: seven numbered steps, ending in a verdict. It takes several minutes —
+most of it Spike building and running each candidate, not the model thinking.""")
+
+md("""### 4.4 What it asked, and what it cost
+
+The run records every call. This is the search size: change `--beam`, `--expansions` or
+`--rounds` and this table is what changes.""")
+code('''lab.show_search_shape(run)''')
+md("""Expected, for `--beam 2 --expansions 2 --rounds 2`: two `synth` calls that write a
+first kernel, then `optimize` calls that try to improve it, tagged by round.
+
+Read the `in` column. The prompt grows between rounds because the board's numbers are
+appended to it — which is the next cell.""")
+
+md("""### 4.5 What the board told the model
+
+Between rounds the loop writes this file and appends it to the model's system prompt.
+Without it the model is optimizing for Spike's cycle counts, which are not the ones you
+care about.""")
+code('''lab.show_board_feedback(run)''')
+md("""Expected: the reference's cycles per output and the previous round's, measured on
+your FPGA at 40 MHz, with a sentence telling the model that Spike understates wide memory
+accesses.
+
+This is the hook the tutorial's own experiment hangs on: the file says *how many* cycles,
+never *where they went*. Giving the model an instruction trace of its own kernel — so it
+can see which part of the loop the cycles are in — is the obvious next thing to try, and
+Unit 3's TACIT is what would produce it.""")
+
+md("""### 4.6 The kernel it wrote""")
+code('''lab.show_llm_kernel(run, around="for (")''')
+md("""Expected: a loop that loads eight bytes at a time into one register and calls
+`mb_pext_max8` on them, instead of comparing one int8 at a time.""")
+
+md("""### 4.7 The verdict, and the number that is easy to misread
+
+The board runs three images: the reference kernel, the new kernel, and the new kernel
+built with `-DMB_PEXT_HW=0`.""")
+code('''lab.show_board_verdict(run)''')
+md("""**`-DMB_PEXT_HW=0` is not the rewritten loop on its own.** It keeps the kernel's
+packed eight-byte loads and replaces only `mb_pext_max8` with a C model of it, so that arm
+is the packed dataflow with the SIMD emulated. The arm that *would* be the loop alone is
+the same kernel with the MBP path compiled out entirely, and measured on the bench board
+that arm runs **three percent slower than the reference**.
+
+So the speedup does not factor into a loop win times an accelerator win. Almost all of it
+is the instruction, and the loop's whole contribution is making the instruction reachable.
+This is worth dwelling on: the arithmetic of `1.7 × 9.1 = 15.3` is correct and the
+sentence it invites — *the rewrite bought 1.7×* — is not.""")
 
 md("""---
 
