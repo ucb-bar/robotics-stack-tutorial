@@ -19,6 +19,13 @@
 # on that image's own filesystem.  This script copies it from there into the place
 # scripts/86, 87 and 90 read, and gates it.
 #
+# ON A SERVED MACHINE, INSTALL OUTSIDE THE CHECKOUT.  The default destination is inside this
+# repository's ignored out/, which is right on a bench and WRONG on a tutorial seat: the seat
+# serves ~/work over HTTPS behind one shared passphrase, `~/work/repo` is a symlink to the
+# clone, and the weights are then a 200 OK away for every attendee (measured, B190).  Pass
+#     --dest /opt/iiswc/signdet-gen
+# and point the labs at it with SIGN_GEN.  Step 4/5 checks which case it is and says so.
+#
 # IT DOES NOT FETCH.  There is no URL, no S3 bucket, no model host, no --url flag and no code
 # path that opens a socket.  --from must be a local directory, and a value that looks like a
 # remote is refused rather than quietly reinterpreted.  That is not a convenience decision:
@@ -215,19 +222,43 @@ info "scales  SIGN_IN_SCALE_RECIP=$IN_RECIP  SD_OUT_SCALE_PPB=$OUT_PPB"
        SIGN_IN_SCALE_RECIP=127 and will quantise onto a different grid than this model expects"
 
 ########################################################################################
-step "4/5  where it is going -- and that git cannot see it"
-# THE ONE CHECK THAT MATTERS MOST HERE.  These weights must never become a commit.  git
-# check-ignore is the authority on whether they can: if the destination is not ignored, this
-# script stops rather than putting an unpublishable tree in a working directory somebody will
-# later `git add -A`.
-if git -C "$IISWC_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  mkdir -p "$(dirname "$DEST")"
-  if ! git -C "$IISWC_ROOT" check-ignore -q "$DEST" 2>/dev/null; then
-    die "$DEST is NOT ignored by git.  Refusing to install: these weights must never be
-       committed.  out/ is ignored in this repository -- install there, or add the
-       destination to .gitignore first."
-  fi
-  info "$DEST is git-ignored (checked, not assumed)"
+step "4/5  where it is going -- and that nothing can publish it from there"
+# THE ONE CHECK THAT MATTERS MOST HERE, AND IT IS NOW TWO QUESTIONS, NOT ONE.
+#
+#   (a) CAN GIT SEE IT?  These weights must never become a commit, and git check-ignore is the
+#       authority on whether they can.
+#   (b) CAN A SERVED FILE BROWSER SEE IT?  Measured on a tutorial seat (B190): the seat serves
+#       ~/work over HTTPS behind ONE shared passphrase, `~/work/repo` is a SYMLINK to the 18 GB
+#       clone, and jupyter_server follows it -- so `GET /api/contents/repo/out/signdet/gen/
+#       weights.c` returned 200 and 319,313 bytes to an ordinary session.  A tree inside the
+#       clone is git-invisible and PUBLICLY DOWNLOADABLE at the same time.  Git-ignored is
+#       necessary and it is not sufficient.
+#
+# So a destination OUTSIDE every git worktree is the strongest answer to (a), not a way around
+# it, and on a served machine it is the only answer to (b).  It gets its own branch here rather
+# than being caught by check-ignore's error path: `git check-ignore <path outside the repo>`
+# exits 128 with "is outside repository", which the old single `if !` read as "not ignored" and
+# refused -- so the safest destination was the one thing this script could not be told to use.
+mkdir -p "$(dirname "$DEST")"
+DEST_ABS="$(cd "$(dirname "$DEST")" && pwd)/$(basename "$DEST")"
+# Which worktree, if any, CONTAINS the destination -- asked of the destination's own directory,
+# not of $IISWC_ROOT, because those are different questions the moment $DEST is an absolute path
+# somewhere else.
+DEST_WT="$(git -C "$(dirname "$DEST_ABS")" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$DEST_WT" ]; then
+  info "$DEST_ABS is OUTSIDE every git worktree -- git cannot see it at all"
+  info "  (no .gitignore rule is needed or consulted for a path no repository contains)"
+elif git -C "$DEST_WT" check-ignore -q "$DEST_ABS" 2>/dev/null; then
+  info "$DEST_ABS is inside $DEST_WT and is git-ignored (checked, not assumed)"
+  warn "it is inside a CHECKOUT.  On a machine that serves that checkout -- a tutorial seat
+       serves ~/work and ~/work/repo is a symlink to it -- the tree is downloadable by anyone
+       with the seat's passphrase even though git cannot see it.  Prefer a destination outside
+       the checkout entirely:  --dest /opt/iiswc/signdet-gen"
+else
+  die "$DEST_ABS is inside the git worktree $DEST_WT and is NOT ignored there.  Refusing to
+       install: these weights must never be committed.  Either install OUTSIDE the worktree
+       (--dest /opt/iiswc/signdet-gen, which this script now prefers), install under an
+       ignored path such as out/, or add the destination to .gitignore first."
 fi
 
 ########################################################################################

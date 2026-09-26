@@ -163,6 +163,41 @@ label.
 The real model reaches a machine one way: **the tutorial image bakes the lowered tree onto
 its own filesystem.** There is no download.
 
+### Which private artefact embeds them — and what that costs it
+
+§1 says which artefacts do **not** embed these weights, and that list is complete for anything
+this project *publishes*. One artefact does embed them, and naming it is the point of this
+subsection: pretending the numbers exist nowhere is how a copy gets shared by somebody who was
+never told.
+
+| artefact | embeds the trained weights | may it be shared |
+|---|---|---|
+| this repository, every branch | no | yes — that is what it is for |
+| the tutorial notebooks / the published page | no | yes |
+| a model host, an S3 object, any fetch URL | **does not exist** | — |
+| **the private seat AMI** `iiswc-2026-seat-jupyter-2026-09-26-b190` (`ami-0d8605f3346cbee37`) and every later rebake of it | **yes**, at `/opt/iiswc/signdet`, installed into the gen tree by the script below | ***NEVER*** |
+
+> ### An image that carries these weights must never be shared
+>
+> Not made public, not shared with another AWS account, not copied to a public snapshot — and
+> the snapshots an image references are shareable *independently of it*, so they carry the same
+> rule. The distinction is **publication, not baking**: a private image the account owns is not
+> a published artefact; a shared one is. The image states this in its own description and tags,
+> and on the instance at `/opt/iiswc/SIGNDET_WEIGHTS.txt`. Mechanism and evidence:
+> `docs/TUTORIAL_SEAT_BUILD.md` §0 and §11 (private tree).
+
+Two things follow that are easy to get wrong in the other direction:
+
+* **Baking them is not a mistake to be corrected.** The demo needs a detector that detects; gate
+  4 REPLAY is the only claim about detection that the tutorial can make, and it needs the real
+  numbers. "Never bake a weight" was never the rule — *never publish one* is.
+* **The install destination is still `out/signdet/gen`**, inside the image's clone and therefore
+  inside a git worktree, and that is deliberate rather than an oversight: `out/` is git-ignored,
+  `git check-ignore` is asked before anything is written (step 5 below), and a destination
+  *outside* the worktree cannot be checked by it at all — `git check-ignore` on such a path exits
+  128 with *"is outside repository"*, which is a refusal, not a pass. Invisible-to-git is the
+  property that matters, and it is the one that is checked.
+
 ```
 ./scripts/91_signdet_install_model.sh --from /path/on/this/image/signdet
 ```
@@ -252,5 +287,7 @@ from a directory of captures pulled by `scripts/85_cam_snap_pull.sh`.
 * The real weights ship with the tutorial image and are installed by
   `scripts/91_signdet_install_model.sh` from a local directory, with a checksum manifest and
   no network.
+* **That image is therefore the one artefact that must never be shared** — not public, not with
+  another AWS account, not as a public snapshot. §5 names it.
 * GTSDB belongs to its authors, is cited in `signdet/make_data.py`, and must be obtained from
   its own source.
