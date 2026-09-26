@@ -1,0 +1,42 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageOnlyTheTutorialBedrockUser",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetUser",
+        "iam:CreateUser",
+        "iam:DeleteUser",
+        "iam:TagUser",
+        "iam:PutUserPolicy",
+        "iam:GetUserPolicy",
+        "iam:DeleteUserPolicy",
+        "iam:ListUserPolicies",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListAccessKeys",
+        "iam:GetLoginProfile",
+        "iam:ListGroupsForUser",
+        "iam:CreateServiceSpecificCredential",
+        "iam:ListServiceSpecificCredentials",
+        "iam:UpdateServiceSpecificCredential",
+        "iam:DeleteServiceSpecificCredential"
+      ],
+      "Resource": "arn:aws:iam::*:user/iiswc-2026-bedrock"
+    },
+    {
+      "Sid": "ReadOnlyChecks",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "bedrock:GetFoundationModel",
+        "bedrock:GetFoundationModelAvailability",
+        "bedrock:GetInferenceProfile",
+        "servicequotas:ListServiceQuotas",
+        "cloudwatch:GetMetricData",
+        "pricing:GetProducts"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

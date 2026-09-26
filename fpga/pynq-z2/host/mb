@@ -1,0 +1,396 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# mb: ModelBlaster + an LLM on your board, in one command. Runs on your seat (a Jupyter
+# terminal; the board is driven through its reverse tunnel and the card agent) or on the board.
+#
+#   mb                     pick a kernel from the menu, then run it as with mb go
+#   mb go maxpool2d_s8     your seat asks the LLM for a faster kernel and checks it on spike;
+#                          your board runs before + after on the FPGA; the verdict comes back
+#   mb go maxpool2d_s8 --hint none   (flags pass through to the lab: --hint, --guide, --rounds, --beam)
+#   mb go maxpool2d_s8 --replay   fallback: no model call, replays a verified LLM kernel
+#
+#   Your turn: write the accelerator kernel yourself and run each attempt on the FPGA.
+#   mb start maxpool2d_s8 [<run>]   copy the starting kernel (or the kernel of one of your LLM
+#                                   runs) to ~/work/modelblaster-llm-lab/your-kernel/ on your seat
+#   mb edit  maxpool2d_s8           edit that file (nano, on your seat)
+#   mb try   maxpool2d_s8 [<file>]  verify it, run it on the FPGA, print the verdict (~2 min)
+#
+#   mb report <run>        a run's verdict again            mb calls <run>   every LLM prompt and answer
+#   mb commands <run>      the ModelBlaster / west / spike / board commands the run executed
+#   mb list                your runs so far          mb seat    (on the board) a shell on your seat
+#   mb run <run>           (on the board) redo only the board step of a run your seat published
+#   mb collect <run>       fold a run's board results into its verdict again
+#   mb check <kernel.c> [op]   is a kernel bit-exact over every input? (path in the repo on your seat;
+#                          e.g. fpga/pynq-z2/modelblaster/mb_ops/exercises/gelu_s8_broken.c)
+#   mb show <file>         print a file from the repo on your seat (e.g. that exercise kernel)
+#   mb doctor              is this board, its seat and the LLM key ready? one line each
+#   mb run-image <zephyr.bin>   (on the seat) run one image on your board and print its console
+#
+# Nothing connects to the board from outside. On the board, mb uses the seat key and the card's
+# aws_whoami / aws_pull / aws_push, loader and console reader (/opt/iiswc/host); on the seat,
+# it reaches the card agent through the reverse tunnel the board opened.
+#   MB_SEAT=<aws-N.iiswc|ip>   use this seat (e.g. if the router's name service is down)
+set -uo pipefail
+
+HOST=/opt/iiswc/host
+KEY="${AWS_KEY:-$HOME/.ssh/iiswc-2026-tutorial.pem}"
+USER_="${AWS_USER:-ubuntu}"
+c_grn=$'\033[32m'; c_red=$'\033[31m'; c_yel=$'\033[33m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
+say()  { printf '%s\n' "$*"; }
+# ~/.mb-board.lock allows one run at a time per board; scripts/lib/mb_board.sh and
+# mb_by_hand.ipynb hold it during put/run/get. Busy means someone holds it now.
+board_busy() { [ -e "$HOME/.mb-board.lock" ] && ! flock -n "$HOME/.mb-board.lock" true 2>/dev/null; }
+step() { printf '\n%s==> %s%s\n' "$c_grn" "$*" "$c_off"; }
+die()  { printf '%s[fail]%s %s\n' "$c_red" "$c_off" "$*" >&2; exit 1; }
+
+# On the seat (a Jupyter terminal with the board's reverse tunnel) the lab runs locally and
+# drives the board through the card agent; see scripts/lib/mb_board.sh.
+# A board has the card scripts in $HOST; a seat has the lab set up in dev.env. Seats may have a
+# $HOST directory of their own, so test for a card script, not for the directory.
+ON_SEAT=0
+[ ! -f "$HOST/aws_whoami.sh" ] && [ -f "$HOME/.config/iiswc/dev.env" ] && ON_SEAT=1
+MB="~/mb"; [ "$ON_SEAT" = 1 ] && MB="mb"     # how to type this command where it runs
+
+seat() {
+  [ "$ON_SEAT" = 1 ] && { echo localhost; return; }
+  if [ -n "${MB_SEAT:-}" ]; then echo "$MB_SEAT"; return; fi
+  "$HOST/aws_whoami.sh" --name 2>/dev/null \
+    || die "could not work out this board's seat.  Pass it:  MB_SEAT=aws-N.iiswc mb ...  (or its IP)"
+}
+# The same host key options as aws_ssh.sh: seats are rebuilt from one AMI, so host keys change.
+SSHO=(-i "$KEY" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+on_seat() {   # run a shell command in the lab environment on the seat (sent on stdin to avoid quoting)
+  if [ "$ON_SEAT" = 1 ]; then
+    printf '. ~/.config/iiswc/dev.env && cd ~/iiswc-tutorial && . ./env.sh >/dev/null 2>&1 || exit 97\n%s\n' "$*" | bash -s
+  else
+    printf '. ~/.config/iiswc/dev.env && cd ~/iiswc-tutorial && . ./env.sh >/dev/null 2>&1 || exit 97\n%s\n' "$*" \
+      | ssh "${SSHO[@]}" "$USER_@$SEAT" 'bash -s'
+  fi
+  local rc=$?
+  [ "$rc" = 97 ] && die "your seat $SEAT is not set up for the lab (no ~/.config/iiswc/dev.env).
+       Instructors: scripts/96_seat_mb_setup.sh --seat ubuntu@$SEAT --ssh-key <seat key>"
+  [ "$rc" = 255 ] && die "cannot reach your seat $SEAT over ssh.  If the name does not resolve,
+       try:  MB_SEAT=<seat IP> $MB ..."
+  return $rc
+}
+seat_sh() {   # one raw command string on the seat (no lab environment), for the fast poll
+  if [ "$ON_SEAT" = 1 ]; then bash -c "$1"; else ssh "${SSHO[@]}" "$USER_@$SEAT" "$1"; fi
+}
+pull_board_script() {
+  "$HOST/aws_pull.sh" "$SEAT" pub/mb/mb_board_run.sh "$HOME/mb_board_run.sh" >/dev/null \
+    || die "could not pull the board script from $SEAT: is the seat set up (scripts/96)?"
+}
+
+board_run() {   # <run>
+  pull_board_script
+  bash "$HOME/mb_board_run.sh" "$1" "$SEAT"
+}
+
+go() {   # <op> [flags for scripts/95]
+  local op="$1"; shift
+  local name; name="$(date +%Y%m%d-%H%M%S)-$op"
+  # By default the FPGA is in the optimization loop: each round's best kernel runs on this
+  # board and the LLM sees its cycles. The lab ignores this for --replay and --kernel.
+  local loop="--board-loop" args=()
+  for a in "$@"; do [ "$a" = --no-board-loop ] && loop="" || args+=("$a"); done
+  # Fallbacks, each announced to the user:
+  #   LLM key does not answer  -> replay a verified LLM kernel (no model call)
+  #   board does not answer    -> spike only (no FPGA numbers; the kernel is still checked)
+  local where="board" note=""
+  case " $* " in *" --replay "*|*" --kernel "*|*" --backend reference "*) ;; *)
+    if ! on_seat "./scripts/94_bedrock_check.sh" >/dev/null 2>&1; then
+      say "${c_yel}    the LLM key does not answer: replaying a verified LLM kernel instead (no model call)${c_off}"
+      args+=(--replay); note="replay: the LLM key did not answer"
+    fi ;;
+  esac
+  if [ "$ON_SEAT" = 1 ]; then
+    local ak="${MB_BOARD_AGENT_KEY:-$HOME/.ssh/iiswc-board-agent}"
+    # Up to three pings 5 s apart: a ping can fail right after a board run, and one miss should
+    # not leave the whole run on spike only.
+    local up=0 i
+    if [ "${MB_SPIKE_ONLY:-0}" != 1 ] && [ -r "$ak" ] && board_busy; then
+      # A board in the middle of another run may not answer a ping. This run queues for it
+      # (mb_board_remote_run waits for the lock).
+      say "${c_yel}    your board is busy with another run on this seat: this one will wait its turn for the board${c_off}"
+      up=1
+    elif [ "${MB_SPIKE_ONLY:-0}" != 1 ] && [ -r "$ak" ]; then
+      for i in 1 2 3; do
+        ssh -p "${MB_BOARD_AGENT_PORT:-19022}" -i "$ak" \
+          -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR xilinx@localhost ping < /dev/null >/dev/null 2>&1 \
+          && { up=1; break; }
+        [ $i -lt 3 ] && sleep 5
+      done
+    fi
+    if [ "$up" = 0 ]; then
+      say "${c_yel}    your board does not answer through its tunnel: running on spike only (mb doctor says why)${c_off}"
+      where="spike"; loop=""; note="${note:+$note; }spike only: the board did not answer"
+    fi
+    step "the lab for $op starts here$([ "$where" = board ] && echo "; it drives your board through the board's reverse tunnel")"
+  else
+    step "your seat ($SEAT) starts the lab for $op"
+  fi
+  # setsid -f detaches the lab so this ssh returns at once (with nohup it stayed open until the
+  # lab ended, blocking the board step). MB_BOARD_WAIT=0: the seat publishes and finishes, and
+  # this script runs the board steps and then asks the seat to collect, so only one side owns it.
+  # On the board, MB_BOARD_NO_AGENT=1 keeps the seat's lab from also driving the board.
+  local who=""; [ "$ON_SEAT" = 0 ] && who="MB_BOARD_NO_AGENT=1"
+  on_seat "mkdir -p ~/mb_logs && $who MB_BOARD_WAIT=0 setsid -f ./scripts/95_mb_kernel_llm.sh --op $op --where $where --name $name $loop ${args[*]} \
+           > ~/mb_logs/$name.log 2>&1 < /dev/null; echo started" >/dev/null \
+    || die "could not start the lab on $SEAT"
+  say "    run: $name"
+  # Poll the seat for its status, the board packages published so far, and one frame of the
+  # live chart (scripts/lib/mb_progress.py). On a terminal the chart is redrawn in place;
+  # otherwise only new steps print.
+  local last="" st t0 k=1 frame lines=0 cols; t0=$(date +%s)
+  cols=$(tput cols 2>/dev/null || echo 80); [ "$cols" -gt 100 ] && cols=100
+  while :; do
+    st="$(seat_sh "cd ~/iiswc-tutorial
+          cat out/mb_lab/$name/status.json 2>/dev/null; echo
+          test -f ~/pub/mb/$name-r$k/manifest.json && echo @ROUND
+          test -f ~/pub/mb/$name/manifest.json && echo @PUBLISHED
+          test -f ~/pub/mb/$name/loop_done && echo @LOOPDONE
+          echo @FRAME; python3 scripts/lib/mb_progress.py out/mb_lab/$name --width $((cols - 2)) 2>/dev/null" 2>/dev/null)"
+    local line; line="$(printf '%s' "$st" | python3 -c '
+import json,sys
+t=sys.stdin.read().split("\n")[0]
+try: d=json.loads(t); print(d.get("state","?")+"|"+d.get("step",""))
+except Exception: print("starting|")' 2>/dev/null)"
+    local state="${line%%|*}" now="${line#*|}"
+    if [ -t 1 ]; then
+      frame="$(printf '%s\n' "$st" | sed -n '/^@FRAME$/,$p' | sed 1d)"
+      if [ -n "$frame" ]; then
+        [ "$lines" -gt 0 ] && printf '\033[%dF\033[J' "$lines"
+        printf '%s\n' "$frame"; lines=$(printf '%s\n' "$frame" | wc -l)
+      fi
+    elif [ -n "$now" ] && [ "$now" != "$last" ]; then
+      printf '    %s[%3ss]%s %s\n' "$c_dim" "$(( $(date +%s) - t0 ))" "$c_off" "$now"; last="$now"
+    fi
+    case "$st" in
+      *@ROUND*)
+        # On the seat the lab runs each round on the board itself; only count it.
+        if [ "$ON_SEAT" = 1 ]; then k=$((k + 1)); continue; fi
+        # This round's best kernel is waiting for the FPGA: run it quietly and push it back.
+        lines=0
+        printf '    %s==> round %d: your FPGA runs the best kernel so far%s\n' "$c_grn" "$k" "$c_off"
+        board_run "$name-r$k" > "$HOME/mb-runs/$name-r$k.log" 2>&1 \
+          || { tail -15 "$HOME/mb-runs/$name-r$k.log"; die "the board failed on round $k (above)"; }
+        grep -a -E '^    MB_PEXT_RUN' "$HOME/mb-runs/$name-r$k.log" | sed 's/^    /      /' | cut -c1-110
+        k=$((k + 1)); continue ;;
+    esac
+    # One package published (no loop, replay or your kernel), or the loop's rounds are over.
+    case "$st" in *@PUBLISHED*|*@LOOPDONE*) break ;; esac
+    [ "$state" = done ] && break
+    [ "$state" = failed ] && { on_seat "tail -12 ~/mb_logs/$name.log" 2>/dev/null
+      case " $* " in *" --kernel "*) die "your kernel did not make it to the board (above).  Fix it:  $MB edit $op" ;; esac
+      die "the lab failed on your seat (above).  Try:  $MB go $op --replay   (no model call)"; }
+    [ $(( $(date +%s) - t0 )) -lt 2700 ] || die "nothing after 45 min; the seat log is ~/mb_logs/$name.log"
+    sleep 4
+  done
+  # Without the loop (also for replay and your kernel) the seat published one package:
+  # before, after [, mbpoff]. With the loop, the rounds already ran.
+  if [ "$ON_SEAT" = 0 ] && on_seat "test -f ~/pub/mb/$name/before.bin" >/dev/null 2>&1; then
+    step "your board runs the images on the FPGA"
+    board_run "$name" || die "the board step failed (above); the spike result stands:  $MB report $name"
+  fi
+  step "the verdict"
+  # The seat's lab may still be writing run.json when the board is done; wait for it.
+  for _ in $(seq 1 100); do
+    on_seat "test -f out/mb_lab/$name/run.json" >/dev/null 2>&1 && break
+    on_seat "grep -q '\"failed\"' out/mb_lab/$name/status.json" >/dev/null 2>&1 && { on_seat "tail -12 ~/mb_logs/$name.log"; die "the lab failed on your seat (above)"; }
+    sleep 3
+  done
+  if [ "$where" = board ]; then
+    on_seat "./scripts/95_mb_kernel_llm.sh --collect $name >/dev/null 2>&1; sed -n '1,4p;/^  board/,/^  on the accelerator/p' out/mb_lab/$name/report.txt" 2>/dev/null \
+      || say "    (could not collect yet; try: $MB collect $name)"
+  else
+    on_seat "sed -n '1,4p' out/mb_lab/$name/report.txt" 2>/dev/null
+  fi
+  [ -n "$note" ] && say "${c_yel}    ($note)${c_off}"
+  say ""
+  say "    every LLM call:  $MB calls $name        this report again:  $MB report $name"
+}
+
+EX=fpga/pynq-z2/modelblaster/mb_ops/exercises
+# Your kernel lives in the lab's JupyterLab folder (~/work) so it can be edited there.
+# In single quotes so the ~ expands on the seat.
+KDIR='~/work/modelblaster-llm-lab/your-kernel'
+start() {   # <op> [<run>]
+  local op="$1" run="${2:-}"
+  if [ -n "$run" ]; then
+    on_seat "set -e; mkdir -p $KDIR; k=\$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[\"after_kernel\"])' out/mb_lab/$run/run.json)
+      [ -f $KDIR/$op.c ] && cp $KDIR/$op.c $KDIR/$op.c.bak; cp \"\$k\" $KDIR/$op.c; echo \"    $KDIR/$op.c  <- the kernel of run $run\"" \
+      || die "no kernel in run $run (mb list shows your runs)"
+  else
+    on_seat "set -e; mkdir -p $KDIR; test -f $EX/${op}_start.c || { echo \"    no starting kernel for $op; there is one for: \$(cd $EX && ls *_start.c | sed 's/_start.c//' | tr '\\n' ' ')\"; exit 3; }
+      [ -f $KDIR/$op.c ] && cp $KDIR/$op.c $KDIR/$op.c.bak; cp $EX/${op}_start.c $KDIR/$op.c; echo \"    $KDIR/$op.c  <- the unoptimized starting kernel\"" \
+      || die "could not copy the starting kernel"
+  fi
+  say "    (any previous copy is in $KDIR/$op.c.bak)   next:  $MB edit $op   then   $MB try $op"
+}
+edit() {   # <op>
+  on_seat "test -f $KDIR/$1.c" || die "no $KDIR/$1.c yet; first:  $MB start $1"
+  [ "$ON_SEAT" = 1 ] && exec nano "$HOME/work/modelblaster-llm-lab/your-kernel/$1.c"
+  exec ssh "${SSHO[@]}" -t "$USER_@$SEAT" "nano $KDIR/$1.c"
+}
+
+doctor() {   # this card, its seat and the key; makes one small LLM call from the seat
+  local bad=0 hostdir="" sname
+  ok()   { printf '  %sok%s    %s\n' "$c_grn" "$c_off" "$1"; }
+  warn_(){ printf '  %swarn%s  %s\n        -> %s\n' "$c_yel" "$c_off" "$1" "$2"; }
+  miss() { printf '  %sFAIL%s  %s\n        -> %s\n' "$c_red" "$c_off" "$1" "$2"; bad=1; }
+  if [ "$ON_SEAT" = 1 ]; then   # on the seat: the lab here, the board through its tunnel
+    step "this seat"
+    on_seat "true" >/dev/null 2>&1 && ok "set up for the lab (toolchain, repo, dev.env)" \
+      || miss "not set up for the lab" "instructors: scripts/96_seat_mb_setup.sh"
+    step "your board, through its reverse tunnel (the card's agent)"
+    local A=(ssh -p "${MB_BOARD_AGENT_PORT:-19022}" -i "${MB_BOARD_AGENT_KEY:-$HOME/.ssh/iiswc-board-agent}"
+             -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no
+             -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR xilinx@localhost)
+    if [ ! -r "${MB_BOARD_AGENT_KEY:-$HOME/.ssh/iiswc-board-agent}" ]; then
+      miss "this seat has no board-agent key (~/.ssh/iiswc-board-agent)" "instructors: the seat image"
+    else
+      local st; st="$("${A[@]}" status < /dev/null 2>/dev/null)"
+      local bh; bh="$(printf '%s' "$st" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin); print(d["board"].get("hostname","?") if d.get("ok") else "")
+except Exception: pass' 2>/dev/null)"
+      if [ -n "$bh" ]; then
+        ok "board $bh answers through the tunnel (port ${MB_BOARD_AGENT_PORT:-19022})"
+        printf '%s' "$st" | grep -q '"pl_state":"operating"' && ok "its FPGA is up" \
+          || warn_ "its FPGA does not report 'operating'" "the first run loads the bitstream anyway"
+      elif board_busy; then
+        warn_ "your board is busy with a run on this seat" "it answers again when that run is done; a new run waits its turn"
+      else
+        miss "no board answers through the tunnel" "is your board on, on the WiFi, and its iiswc-tunnel.service up?"
+      fi
+    fi
+    step "the LLM key (one tiny call)"
+    on_seat "./scripts/94_bedrock_check.sh" >/dev/null 2>&1 && ok "Bedrock answers" \
+      || miss "the Bedrock key does not work" "instructors: 93_bedrock_key.sh status / distribute.  Meanwhile: mb go maxpool2d_s8 --replay"
+    say ""
+    [ "$bad" = 0 ] && say "  ready: run  mb" || say "  not ready (above)"
+    return $bad
+  fi
+  step "this board"
+  for d in /opt/iiswc/host /home/xilinx/tutorial; do [ -f "$d/console.py" ] && { hostdir="$d"; break; }; done
+  [ -n "$hostdir" ] && ok "loader and console reader in $hostdir" || miss "no console.py on this card" "the card image lacks /opt/iiswc/host (instructors)"
+  local bit=pynqz1_rocket_micrgb_roccmoonnch8f40b98ball.bit b found=""
+  for b in "/opt/iiswc/bit/$bit" "$hostdir/$bit" "/home/xilinx/tutorial/$bit"; do [ -f "$b" ] && { found="$b"; break; }; done
+  [ -n "$found" ] && ok "the 0x5A5A0038 bitstream ($found)" || miss "no 0x5A5A0038 bitstream on this card" "instructors: the card image"
+  sudo -n true 2>/dev/null && ok "passwordless sudo" \
+    || warn_ "no passwordless sudo" "mb will ask for the board password once per run (card image: sudoers for xilinx)"
+  { [ -r /dev/ttyPS1 ] && [ -w /dev/ttyPS1 ]; } && ok "console /dev/ttyPS1 readable" \
+    || warn_ "xilinx cannot open /dev/ttyPS1 directly" "mb reads it via sudo (card image: add xilinx to dialout)"
+  step "your seat"
+  sname="$(seat)"; ok "this board's seat: $sname"
+  if ssh "${SSHO[@]}" "$USER_@$SEAT" true 2>/dev/null; then ok "reachable over ssh"
+  else miss "cannot ssh to $SEAT" "MB_SEAT=<seat IP> $MB doctor; else instructors"; fi
+  if on_seat "true" >/dev/null 2>&1; then ok "set up for the lab (toolchain, repo, dev.env)"
+  else miss "not set up for the lab" "instructors: scripts/96_seat_mb_setup.sh --seat ubuntu@<seat IP>"; fi
+  "$HOST/aws_pull.sh" "$SEAT" pub/mb/mb_board_run.sh /tmp/.mb_doctor_probe >/dev/null 2>&1 \
+    && { rm -f /tmp/.mb_doctor_probe; ok "board scripts published on the seat"; } \
+    || miss "the seat has not published mb_board_run.sh" "instructors: scripts/96_seat_mb_setup.sh"
+  step "the LLM key (one tiny call, from the seat)"
+  if on_seat "./scripts/94_bedrock_check.sh" >/tmp/.mb_doctor_key 2>&1; then ok "Bedrock answers ($(grep -o 'deepseek[^ ]*' /tmp/.mb_doctor_key | head -1))"
+  else miss "the seat's Bedrock key does not work" "instructors: 93_bedrock_key.sh status / distribute.  Meanwhile: $MB go maxpool2d_s8 --replay"; fi
+  rm -f /tmp/.mb_doctor_key
+  say ""
+  [ "$bad" = 0 ] && say "  ready: run  ~/mb" || say "  not ready (above)"
+  return $bad
+}
+
+menu() {
+  step "kernels you can optimize (your seat's menu)"
+  local lines; lines="$(on_seat "./scripts/95_mb_kernel_llm.sh --list")" || die "could not reach your seat $SEAT"
+  printf '%s\n' "$lines" | awk '{printf "  %d) %s\n", NR, $0}'
+  local n; read -r -p $'\n'"which one? [1 = $(printf '%s\n' "$lines" | awk 'NR==1{print $1}'), recommended] " n
+  n="${n:-1}"
+  local op; op="$(printf '%s\n' "$lines" | awk -v n="$n" 'NR==n{print $1}')"
+  [ -n "$op" ] || die "no kernel number $n"
+  go "$op"
+}
+
+cmd="${1:-menu}"; shift || true
+case "$cmd" in
+  -h|--help|help) sed -n '4,33p' "$0"; exit 0 ;;
+esac
+# run_image <zephyr.bin>: put the image on your board, run it and print its console. These are
+# the board agent's put, run and get verbs, with the board lock and one retry of an incomplete
+# console. Messages go to stderr, so stdout is the console alone.
+run_image() {
+  local bin="$1" out try i
+  [ "$ON_SEAT" = 1 ] || die "mb run-image runs on your seat, which reaches the board through its tunnel"
+  [ -f "$bin" ] || die "no image $bin"
+  local A=(ssh -p "${MB_BOARD_AGENT_PORT:-19022}" -i "${MB_BOARD_AGENT_KEY:-$HOME/.ssh/iiswc-board-agent}"
+           -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=no
+           -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR xilinx@localhost)
+  exec 9>>"$HOME/.mb-board.lock"
+  if ! flock -n 9; then
+    say "your board is busy with another run on this seat: waiting for it" >&2
+    flock -w 1800 9 || die "your board stayed busy for 30 min"
+  fi
+  for i in 1 2 3; do
+    "${A[@]}" "put zephyr.bin $(stat -c %s "$bin") $(md5sum < "$bin" | cut -d' ' -f1)" < "$bin" > /dev/null && break
+    [ "$i" = 3 ] && die "could not upload $bin to your board (mb doctor says why)"
+    sleep 5
+  done
+  out="$(mktemp)"
+  for try in 1 2; do
+    "${A[@]}" "run zephyr" < /dev/null > /dev/null \
+      && "${A[@]}" "get console.out" < /dev/null | tr -d '\r' > "$out"
+    grep -aq '^RESULT:' "$out" && break
+    [ "$try" = 1 ] && say "the console came back incomplete; running the image once more" >&2
+  done
+  grep -aq '^RESULT:' "$out" || { rm -f "$out"; die "the image did not complete on your board (mb doctor says why)"; }
+  cat "$out"
+  rm -f "$out"
+}
+
+SEAT="$(seat)"
+case "$cmd" in
+  menu) menu ;;
+  run-image) [ $# -ge 1 ] || die "which image?  mb run-image <path>/zephyr/zephyr.bin"; run_image "$1" ;;
+  doctor) doctor; exit $? ;;
+  start) [ $# -ge 1 ] || die "which kernel?  mb start maxpool2d_s8"; start "$@" ;;
+  edit)  [ $# -ge 1 ] || die "which kernel?  mb edit maxpool2d_s8"; edit "$1" ;;
+  try)   [ $# -ge 1 ] || die "which kernel?  mb try maxpool2d_s8 [<file>]"
+         f="${2:-"$KDIR/$1.c"}"      # the ~ in $KDIR is the SEAT's home, expanded there
+         on_seat "test -f $f" || die "no $f on your seat; first:  $MB start $1"
+         go "$1" --kernel "$f" ;;
+  go)   [ $# -ge 1 ] || die "which kernel?  mb go maxpool2d_s8   (or just: mb)"; go "$@" ;;
+  run)  [ $# -ge 1 ] || die "which run?  mb run <run>   (mb list shows them)"
+        # On the seat the board step is part of every run (the lab drives the board through the
+        # agent), so there is no separate board step to redo.
+        [ "$ON_SEAT" = 1 ] && die "on the seat, the board step is part of each run: check the board with  mb doctor,
+       then run it again (mb go ... or mb try ...)"
+        board_run "$1" ;;
+  collect) [ $# -ge 1 ] || die "which run?"
+           on_seat "./scripts/95_mb_kernel_llm.sh --collect $1" ;;
+  check) [ $# -ge 1 ] || die "which kernel file?  mb check <path in the repo> [op]"
+         # Also check the scales from the IR of your latest run of this op, as the lab does:
+         # 576 grid pairs plus the IR's, 147,712 cases for a unary op.
+         on_seat "op=${2:-gelu_s8}; g=\$(ls -dt out/mb_lab/*-\$op*/ir/graph.json 2>/dev/null | head -1)
+           sc=\$([ -n \"\$g\" ] && python3 -c '
+import json,sys
+o=[o for o in json.load(open(sys.argv[1]))[\"ops\"] if o[\"op\"]==sys.argv[2]][0]; q=o.get(\"quant\") or {}
+print(\",\".join(str(q[k]) for k in (\"scale_a\",\"scale_b\",\"scale_in\",\"scale_out\") if k in q))' \"\$g\" \$op 2>/dev/null)
+           PYTHONPATH=\$ZCS python3 scripts/lib/mb_enum_check.py --op \$op --candidate $1 \
+             --build-dir /tmp/mb-check-\$\$ \${sc:+--scales \"\$sc\"} | grep -E '^DIFF|enumerated' | head -6 > /tmp/mb-check-\$\$.out
+           cat /tmp/mb-check-\$\$.out; ! grep -q 'NOT bit-exact' /tmp/mb-check-\$\$.out; rc=\$?
+           rm -rf /tmp/mb-check-\$\$ /tmp/mb-check-\$\$.out; exit \$rc" ;;
+  show) [ $# -ge 1 ] || die "which file?  mb show <path in the repo>"
+        case "$1" in /*|*..*) die "a path inside the repo, e.g. fpga/pynq-z2/modelblaster/mb_ops/exercises/gelu_s8_broken.c" ;; esac
+        on_seat "cat -- '$1'" ;;
+  list) on_seat "python3 scripts/lib/mb_report.py --list out/mb_lab" ;;
+  report) [ $# -ge 1 ] || die "which run?  mb report <run>   (mb list shows them)"
+          on_seat "cat out/mb_lab/$1/report.txt" || die "no report for $1 yet" ;;
+  commands) [ $# -ge 1 ] || die "which run?  mb commands <run>   (mb list shows them)"
+            on_seat "python3 scripts/lib/mb_report.py --commands out/mb_lab/$1" ;;
+  calls)  [ $# -ge 1 ] || die "which run?  mb calls <run>   (mb list shows them)"
+          on_seat "python3 scripts/lib/mb_report.py --calls out/mb_lab/$1" | { [ -t 1 ] && less -R || cat; } ;;
+  seat) [ "$ON_SEAT" = 1 ] && { say "you are on your seat already"; exit 0; }
+        exec ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -t "$USER_@$SEAT" ;;
+  *) die "unknown command $cmd (mb help)" ;;
+esac

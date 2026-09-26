@@ -91,4 +91,24 @@ export PYNQ_DIR="${PYNQ_DIR:-/home/xilinx/tutorial}"
 # needs XRT's environment -- without both, pynq.Bitstream raises "No Devices Found".
 export PYNQ_ENV="source /etc/profile.d/xrt_setup.sh 2>/dev/null; source /usr/local/share/pynq-venv/bin/activate;"
 
+# --- Bedrock key for BACKEND=llm -----------------------------------------------------
+#
+# ModelBlaster's LLM backend reads AWS_BEARER_TOKEN_BEDROCK, AWS_REGION, MODEL and
+# MODELBLASTER_MAX_USD. They come from an untracked file with mode 600 that
+# `scripts/93_bedrock_key.sh distribute` installs on each seat. Without it they stay unset
+# and only BACKEND=llm is unavailable.
+#
+# Resolution order, as for board.conf above:
+#   1. AWS_BEARER_TOKEN_BEDROCK already exported
+#   2. $IISWC_BEDROCK_ENV, default ~/.config/iiswc/bedrock.env
+#   3. unset; scripts/94_bedrock_check.sh reports what is missing
+IISWC_BEDROCK_ENV="${IISWC_BEDROCK_ENV:-$HOME/.config/iiswc/bedrock.env}"
+if [ -z "${AWS_BEARER_TOKEN_BEDROCK:-}" ] && [ -f "$IISWC_BEDROCK_ENV" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$IISWC_BEDROCK_ENV"
+  set +a
+fi
+export IISWC_BEDROCK_ENV
+
 mkdir -p "$IISWC_OUT"

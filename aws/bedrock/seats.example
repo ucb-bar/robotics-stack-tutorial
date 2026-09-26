@@ -1,0 +1,10 @@
+# Seats for `scripts/93_bedrock_key.sh distribute --seats FILE`. Copy to aws/bedrock/seats.txt
+# (untracked) or generate it. One ssh destination per line; anything after '#' is ignored.
+# Each destination must accept non-interactive ssh (BatchMode) from the machine running distribute,
+# e.g. with --ssh-key <seat key>.pem.
+#
+# Generate from the running seat instances, if they are tagged tutorial=iiswc-2026:
+#   aws ec2 describe-instances --filters Name=tag:tutorial,Values=iiswc-2026 Name=instance-state-name,Values=running \
+#     --query 'Reservations[].Instances[].[PublicIpAddress]' --output text | sed 's/^/ubuntu@/' > aws/bedrock/seats.txt
+ubuntu@aws-1.iiswc
+ubuntu@aws-2.iiswc

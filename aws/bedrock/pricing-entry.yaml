@@ -1,0 +1,17 @@
+# Merged into ModelBlaster's benchmarks/config/pricing.yaml by `scripts/93_bedrock_key.sh pricing`.
+# Without an entry for the model, ModelBlaster's BudgetTracker prices every call at None and
+# MODELBLASTER_MAX_USD never trips -- silently.
+#
+# $ per million tokens (pricing.yaml's unit). Source: AWS Price List API, service AmazonBedrock,
+# us-west-2, standard on-demand tier, effective 2026-09-01:
+#   USW2-deepseek.v3.2-input-tokens   0.00062 USD / 1K tokens
+#   USW2-deepseek.v3.2-output-tokens  0.00185 USD / 1K tokens
+# Re-read before the tutorial (docs/BEDROCK.md §6 has the query). A different BEDROCK_MODEL_ID
+# needs its own entry here, keyed by exactly the MODEL string.
+models:
+  deepseek.v3.2:
+    input_uncached: 0.62
+    output: 1.85
+    provider: bedrock
+    verified: true
+    source: "AWS Price List API AmazonBedrock us-west-2 standard on-demand, effective 2026-09-01"

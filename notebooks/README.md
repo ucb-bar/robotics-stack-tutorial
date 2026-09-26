@@ -38,6 +38,7 @@ not something to quietly paper over in the notebook.
 | `tools/build_notebook.py` | the source of the notebook. Edit this, re-run it, commit both. |
 | `iiswc_lab.py` | the helpers the notebook imports. Must sit beside the notebook. |
 | `assets/` | anything pre-seeded so an attendee never watches a cold build. |
+| `mb_lab/` | the ModelBlaster + LLM lab (`docs/MB_ATTENDEE.md`). Four generated notebooks (the lab, and the same lab done with the tools' own commands, each with a solved copy) plus their helpers and tools. See its README. |
 
 ## What is here, and what the board half needs that is not
 

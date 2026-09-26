@@ -142,6 +142,17 @@ _pf_out="$("$IISWC_ROOT/scripts/02_verify_patches.sh" --quiet 2>&1)" && _pf_rc=0
 printf '%s\n' "$_pf_out" | grep -v '==>' | grep -v '^[[:space:]]*$' || true
 [ "$_pf_rc" -eq 0 ] || fails=$((fails+1))
 
+# Only BACKEND=llm needs the key, so a missing key is reported, not failed. A configured key
+# that does not answer (revoked, expired, no egress) counts as a failure.
+step "Bedrock (BACKEND=llm only)"
+if [ -n "${AWS_BEARER_TOKEN_BEDROCK:-}" ]; then
+  _br_out="$("$IISWC_ROOT/scripts/94_bedrock_check.sh" 2>&1)" && _br_rc=0 || _br_rc=$?
+  printf '%s\n' "$_br_out"
+  [ "$_br_rc" -eq 0 ] || fails=$((fails+1))
+else
+  printf '  \033[2m--\033[0m    %-22s %s\n' "bedrock key" "not configured ($IISWC_BEDROCK_ENV); only needed for BACKEND=llm (docs/BEDROCK.md)"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then printf '\033[1;32mAll checks passed.\033[0m  Try: scripts/10_tacit_hello.sh\n'; exit 0
 else printf '\033[1;31m%d check(s) failed.\033[0m\n' "$fails"; exit 1; fi

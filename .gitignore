@@ -87,6 +87,14 @@ venv/
 # board.conf.example IS tracked and is the documentation.
 /board.conf
 
+# --- secrets --------------------------------------------------------------------------------
+# The Bedrock key (scripts/93_bedrock_key.sh) and the seat list. Unanchored on purpose: a key
+# written from any cwd must not be committable.
+secrets/
+bedrock.env
+bedrock.env.previous
+aws/bedrock/seats.txt
+
 # --- locks ----------------------------------------------------------------------------------
 /.locks/
 .board*.lock

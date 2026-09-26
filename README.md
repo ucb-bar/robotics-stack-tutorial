@@ -101,6 +101,17 @@ decoder, live microphone, and the accelerator A/Bs — and last the sign-detecti
 `scripts/82`–`87` train, lower, bake and run SignDetLite and the grey-scale classifier before it
 (`scripts/91` installs a real lowered detector; see `docs/SIGNDET_WEIGHTS.md`).
 
+**ModelBlaster + LLM (an AWS seat and the board).** In `scripts/95_mb_kernel_llm.sh --op <op>`,
+ModelBlaster's LLM backend (Bedrock, `BACKEND=llm`) has an LLM rewrite one int8 kernel. Spike scores
+each kernel, and each is checked bit for bit against the reference (over the whole input domain where
+the op allows). The board runs each round's best kernel, and the cycles it measures go into the next
+round's prompt as hardware in the loop feedback. At the end it runs the reference, the new kernel and, when the new kernel uses
+the MBP, the new kernel with the accelerator switched off, so the verdict says how much of the speedup
+comes from the accelerator itself. At the tutorial, attendees work in JupyterLab on their AWS seat
+(`notebooks/mb_lab/`, or `mb` in a terminal, which is `fpga/pynq-z2/host/mb`), and the seat drives their
+board through the board's reverse ssh tunnel. This needs the tutorial's card image and an AWS seat
+(`docs/MB_INSTRUCTOR.md`).
+
 Each lab writes a run directory under `out/`, a `run.json` naming the bitstream md5 and the clocks
 as read back, and a results row. `expected/` holds the golden outputs the labs check themselves
 against.
@@ -210,6 +221,12 @@ The docs kept here are the ones that tell you how to *do* something:
 * `docs/SIGNDET_WEIGHTS.md` — the sign detector's weights: why the trained ones are not here,
   what the random-weight default demonstrates and what it cannot, which of `scripts/90`'s
   gates are meaningful in which mode, and how an operator installs the real ones
+* `docs/BEDROCK.md` — the Bedrock key for `BACKEND=llm`, which can call only one model, and how to create
+  it, test it, put it on every seat, rotate it and revoke it (`scripts/93_bedrock_key.sh`)
+* `docs/MB_ATTENDEE.md` — the attendee's card (a single page) for the ModelBlaster + LLM lab (open `notebooks/mb_lab/mb_lab.ipynb`, or run `mb`)
+* `docs/MB_MAXPOOL_WALKTHROUGH.md`, `docs/MB_GELU_WALKTHROUGH.md` — what the LLM's kernel does, how it is
+  proven correct and proven to run on the accelerator, with exercises
+* `docs/MB_INSTRUCTOR.md` — setting that lab up for a room (the key, the seats, the boards, the fallbacks)
 * `fpga/pynq-z2/docs/BRINGUP.md` — day one with a board: card, network, SSH key, passwordless sudo
 * `fpga/pynq-z2/docs/PROGRAMMING_AND_LOADING.md` — getting bitstreams and binaries into the part
 * `fpga/pynq-z2/docs/UART.md` — console options, and what the on-board FTDI can and cannot do
@@ -238,6 +255,12 @@ so an attendee can tell whether theirs matched. Two units are pre-seeded in `ass
 than built live — a TACIT capture taken on silicon, because the cards do not carry the
 bitstream that can take one, and a kernel gate's expected text, because the gate takes three
 minutes and prints `FAIL` lines by design (they are its poisoned control arms).
+
+`notebooks/mb_lab/` holds the ModelBlaster + LLM lab in the same form. Its notebooks are generated, and the one an
+attendee runs, `mb_lab.ipynb`, is committed without outputs. `mb_lab_solved.ipynb` is committed already drawn, from
+complete recorded runs stored in its `assets/` and scrubbed of hostnames, so it can be read without a board or LLM when a
+live run misbehaves. `mb_by_hand.ipynb` (and its solved copy) runs the same steps as `lab.go()` one
+ModelBlaster, `west` or `spike` command at a time. `notebooks/mb_lab/README.md` describes the folder an attendee sees.
 
 Every cell says where it runs — `lab.sh()` on the instance, `lab.board()` on the card, and
 nothing else touches a board. `notebooks/README.md` says what the board half needs that this
