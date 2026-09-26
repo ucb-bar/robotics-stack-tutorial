@@ -39,6 +39,7 @@ not something to quietly paper over in the notebook.
 | `tools/build_notebook.py` | the source of the notebook. Edit this, re-run it, commit both. |
 | `iiswc_lab.py` | the helpers the notebook imports. Must sit beside the notebook. |
 | `assets/` | anything pre-seeded so an attendee never watches a cold build. |
+| `mb_lab/` | the ModelBlaster + LLM lab (`docs/MB_ATTENDEE.md`): two generated notebooks, their helpers and tools. See its README. |
 
 `board_link.py` must be on one of the paths `iiswc_lab._board_link()` searches, and the
 key it uses (`~/.ssh/iiswc-board-agent`, or `$IISWC_BOARD_KEY`) must be present. Neither

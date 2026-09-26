@@ -1,14 +1,14 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T07:59:57Z",
+  "generated_at": "2026-09-26T08:42:58Z",
   "generated_by": "content_validate.py",
-  "source_commit": "2e60c166882a",
-  "note": "republish, to watch the fleet follow the branch with nobody touching a seat",
+  "source_commit": "ca7df5d268cc",
+  "note": "lab.sh truncates long build output",
   "files": [
     {
       "path": "work/README.md",
-      "bytes": 8986,
-      "sha256": "1c4a6ca81d2286f86e4e214a7e0a1cb82e479b1513fb5643eff79fe1add7de1e"
+      "bytes": 9120,
+      "sha256": "3cb47eda361b47f014ee7b6e47aea4dcc3cb43c1799871306e59cd376ec6fee1"
     },
     {
       "path": "work/assets/b156_lanes.json",
@@ -32,8 +32,8 @@
     },
     {
       "path": "work/iiswc_lab.py",
-      "bytes": 23510,
-      "sha256": "ae675e236ea3eb043451a88d9bde3fff8c3b5becbe26e94d856bf76c82b7e6ca"
+      "bytes": 25478,
+      "sha256": "262e5c4110b37ed4abf072b5e5c730cb8d66dffcccb743748cdd443f53d0264c"
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
@@ -43,6 +43,64 @@
       "nbformat": 4,
       "source_chars": 26278,
       "schema_checked": true
+    },
+    {
+      "path": "work/mb_lab/README.md",
+      "bytes": 2144,
+      "sha256": "4ed610c403cde375b0b0ece26506e57fdedc8b6c093fcf280b4dd6cfc4a1cef0"
+    },
+    {
+      "path": "work/mb_lab/assets/solved_runs.tar.gz",
+      "bytes": 133888,
+      "sha256": "73cf99505c2b15660f229e7ee62c958490acf403e3a123446a0b243287061e80"
+    },
+    {
+      "path": "work/mb_lab/mb_lab.ipynb",
+      "bytes": 9550,
+      "sha256": "5aaf0d2a470000bfb42477cc94841d12d726e33be0de280a1603432329f6e7fe",
+      "cells": 24,
+      "nbformat": 4,
+      "source_chars": 5682,
+      "schema_checked": true
+    },
+    {
+      "path": "work/mb_lab/mb_lab.py",
+      "bytes": 30265,
+      "sha256": "718025ba1cb06ddd08f58c2d363c7d7e498f1a290061dd1e70acc7fbd096c1a5"
+    },
+    {
+      "path": "work/mb_lab/mb_lab_solved.ipynb",
+      "bytes": 7948,
+      "sha256": "64dd3eef1c5e1f412044c3c0c5883bc25797da0e799da5ffebfdd47a49d4e064",
+      "cells": 18,
+      "nbformat": 4,
+      "source_chars": 4816,
+      "schema_checked": true
+    },
+    {
+      "path": "work/mb_lab/seat/README.md",
+      "bytes": 999,
+      "sha256": "42a0aa5e491f07549ea9d3edda007832e5e5a99d59f78f786144ce2cf92f1944"
+    },
+    {
+      "path": "work/mb_lab/seat/walkthroughs/README.md",
+      "bytes": 430,
+      "sha256": "1105fd388374bda3e6e72bfe4b1bf4b37b271941888dec6e04a629fb2997d15e"
+    },
+    {
+      "path": "work/mb_lab/seat/your-kernel/README.md",
+      "bytes": 518,
+      "sha256": "d7166ab7664cf73c6b0d8ec3890e373a327faeb95ac906c20d83a36c432332ed"
+    },
+    {
+      "path": "work/mb_lab/tools/build_notebooks.py",
+      "bytes": 10090,
+      "sha256": "e5b3fc929af470b0570adc22c7357ee9c433a5922617a2ee922b4fe738c07794"
+    },
+    {
+      "path": "work/mb_lab/tools/pack_solved_runs.py",
+      "bytes": 2471,
+      "sha256": "a0de44395520545afb31771efbbe83d6853df5807fdbeab83b4d702667babc02"
     },
     {
       "path": "work/tools/build_notebook.py",

@@ -49,6 +49,7 @@ class Result:
     returncode: int
     stdout: str
     seconds: float
+    log: str = ""      # where the complete output was written, when it was truncated
 
     @property
     def ok(self) -> bool:
@@ -74,14 +75,27 @@ def _clean_env() -> dict:
     return env
 
 
-def sh(cmd: str, timeout: int = 600, cwd: str | None = None, quiet: bool = False) -> Result:
-    """Run a command **on this instance**, streaming as it goes, with a hard timeout.
+SH_HEAD = 12     # lines shown from the start
+SH_TAIL = 30     # lines shown from the end
+SH_LOG_DIR = Path.home() / "work" / "logs"
+
+
+def sh(cmd: str, timeout: int = 600, cwd: str | None = None, quiet: bool = False,
+       head: int = SH_HEAD, tail: int = SH_TAIL, full: bool = False) -> Result:
+    """Run a command on this instance, with a hard timeout.
 
     The timeout is not optional decoration: a cell that can hang is the failure mode
     this whole notebook is designed against.
+
+    Long output is truncated. A `west build` prints thousands of lines, most of them
+    repeated compiler warnings, and scrolling past them to reach the result is worse
+    than not seeing them. The first `head` and last `tail` lines are shown, the count
+    of elided lines is stated, and the complete output is always written to a file
+    under ~/work/logs whose path is printed. Pass `full=True` to stream everything.
     """
     t0 = time.time()
     chunks: list[str] = []
+    shown = 0
     proc = subprocess.Popen(
         ["bash", "-lc", cmd],
         cwd=cwd,
@@ -96,8 +110,15 @@ def sh(cmd: str, timeout: int = 600, cwd: str | None = None, quiet: bool = False
         for line in proc.stdout:
             chunks.append(line)
             if not quiet:
-                sys.stdout.write(line)
-                sys.stdout.flush()
+                if full or shown < head:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                    shown += 1
+                elif len(chunks) % 200 == 0:
+                    # One overwritten line, so a long build shows progress without
+                    # filling the cell.
+                    sys.stdout.write(f"\r    ... {len(chunks)} lines, {time.time()-t0:.0f} s")
+                    sys.stdout.flush()
             if time.time() - t0 > timeout:
                 proc.kill()
                 print(f"\n[timed out after {timeout} s -- killed]")
@@ -108,9 +129,31 @@ def sh(cmd: str, timeout: int = 600, cwd: str | None = None, quiet: bool = False
         raise
     dt = time.time() - t0
     rc = proc.returncode if proc.returncode is not None else -1
+    out = "".join(chunks)
+
+    log = None
+    if len(chunks) > head + tail and not full:
+        try:
+            SH_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            log = SH_LOG_DIR / f"sh-{int(t0)}.log"
+            log.write_text(out)
+        except OSError:
+            log = None   # a read-only home is not a reason to lose the result
+
+    if not quiet and not full and len(chunks) > head + tail:
+        elided = len(chunks) - head - tail
+        warn = sum(1 for ln in chunks if "warning:" in ln)
+        err = sum(1 for ln in chunks if "error:" in ln)
+        counts = f"  ({warn} warning lines, {err} error lines)" if warn or err else ""
+        sys.stdout.write("\r" + " " * 48 + "\r")
+        print(f"    ... {elided} lines elided{counts}")
+        if log:
+            print(f"    full output: {log}")
+        print("".join(chunks[-tail:]), end="")
+
     if not quiet:
         print(f"[rc={rc}  {dt:.1f} s]")
-    return Result(cmd=cmd, returncode=rc, stdout="".join(chunks), seconds=dt)
+    return Result(cmd=cmd, returncode=rc, stdout=out, seconds=dt, log=str(log) if log else "")
 
 
 # --------------------------------------------------------------------------------------
