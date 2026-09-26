@@ -1,0 +1,30 @@
+{
+ "what": "How the work is shaped for two models on the same Rocket SoC",
+ "clock_mhz": 40,
+ "signdet": {
+  "name": "SignDetLite",
+  "runs": "once per camera frame",
+  "dispatches_per_run": 8,
+  "macs_per_run": 7532544,
+  "cycles_median": 9511271,
+  "ms_at_clock": 237.78,
+  "weight_bytes": 72276
+ },
+ "moonshine": {
+  "name": "Moonshine Tiny",
+  "runs": "encoder once per four-second window, then the decoder once per output token",
+  "encoder_dispatches": 117,
+  "encoder_gemm_rows": 165,
+  "prologue_dispatches": 12,
+  "decoder_dispatches_first_step": 164,
+  "decoder_dispatches_later_step": 176,
+  "decoder_gemm_rows": 1,
+  "steps_unrolled": 24,
+  "steps_mean_measured": 11.2545,
+  "macs_per_token": 18993024,
+  "weight_bytes_per_token": 18395136,
+  "mac_per_weight_byte": 1.03,
+  "self_attention_keys_first_step": 1,
+  "self_attention_keys_last_step": 24
+ }
+}

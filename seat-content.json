@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T15:11:49Z",
+  "generated_at": "2026-09-26T16:31:39Z",
   "generated_by": "content_validate.py",
-  "source_commit": "3516d3874e7c",
-  "note": "unit 0 trimmed, descriptive names, unit 2 compilation walkthrough",
+  "source_commit": "b5e7be6534bc",
+  "note": "Unit 1 camera + Zephyr drivers/overlays, Unit 2 compilation flow, and the final demo section",
   "files": [
     {
       "path": "work/README.md",
@@ -19,6 +19,11 @@
       "path": "work/assets/lane_timeline.json",
       "bytes": 9098,
       "sha256": "e7c61c7334b5aaed67d5b15848fb56c257f81507c17a0a4db958e12ab9a93523"
+    },
+    {
+      "path": "work/assets/moonshine_shape.json",
+      "bytes": 866,
+      "sha256": "8307eba50cf7faff109cecd173b0ac0bf049b9ea568cb6d0c00d847b7487eadc"
     },
     {
       "path": "work/assets/rocket_tacit_trace.meta.json",
@@ -42,11 +47,11 @@
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 61745,
-      "sha256": "77b218bae37e68249b6991499b927a64db7c90e9c75d57b6a3615c3c8a7c71da",
-      "cells": 88,
+      "bytes": 101466,
+      "sha256": "2106e40df22fa6d8bac8df86d06d617978439dec10e293ac0ddd4343763aa035",
+      "cells": 129,
       "nbformat": 4,
-      "source_chars": 42985,
+      "source_chars": 72881,
       "schema_checked": true
     },
     {
@@ -119,8 +124,8 @@
     },
     {
       "path": "work/tools/build_notebook.py",
-      "bytes": 50426,
-      "sha256": "faac28564cad22572b414221b378117090f0d8f7652ac28245ccfca6c9a776bf"
+      "bytes": 81770,
+      "sha256": "9ab357db0aea6ba0a57b496d86dde9b9eed3e74d27eb76be4250ad7a7659a97b"
     }
   ],
   "repo": {

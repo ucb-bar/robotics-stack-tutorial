@@ -243,6 +243,213 @@ differ; the OLED restarts at `up 0:00`.
 This has run twice on the bench board and not yet on a card from the imaging flow, so
 zero console bytes may be the card rather than your build.""")
 
+md("""### 1.4 Take a picture with the board's camera
+
+*On the instance, then on the board.* The shield on your card carries an image sensor. The
+SoC has a capture unit that writes one whole frame into DRAM on its own, so no instruction
+in the guest moves a pixel: the guest arms the capture unit, waits, and then prints where
+the frame is and how long it is.
+
+Build the camera guest — about twenty seconds:""")
+code('''lab.sh("""cd /home/ubuntu/tut && source /home/ubuntu/tut/env.sh && \\
+west build -p always -b chipyard_pynqz1_all_f40 \\
+    -d ~/out/cam_capture samples/cam_capture \\
+    -- -DBOARD_ROOT=/home/ubuntu/tut -DCAM_MCLKDIV=2""", timeout=900)''')
+md("Expected, at the end:\n\n" + fence(
+    "Memory region         Used Size  Region Size  %age Used\n"
+    "             RAM:      594216 B       256 MB      0.22%\n"
+    "        IDT_LIST:           0 B         4 KB      0.00%") + """
+
+Upload the image to the card and run it. The guest measures the sensor's pixel clock for a
+second, captures a frame, and prints what it found:""")
+code('''lab.board_put("/home/ubuntu/out/cam_capture/zephyr/zephyr.bin")
+lab.board("run", "zephyr", timeout=300)''')
+md("""Expected: a 52,720-byte push, then `console_bytes` of about 7,700 after some forty
+seconds. Read the lines that describe the capture:""")
+code('''c = lab.board("get", "console.out", binary=True, verbose=False)
+console = c.stdout.decode("utf-8", "replace")
+for line in console.splitlines():
+    if line.startswith(("CAM_SHIELD", "CAM_SENSOR", "CAM_STREAM", "CAM_GEOM",
+                        "CAM_FRAME ", "CAM_RESULT")):
+        print(line)''')
+md("""Expected, measured on card 3:
+
+""" + fence(
+    "CAM_SHIELD present=1\n"
+    "CAM_SENSOR rc=0 model_id=0x01b0 ok=1\n"
+    "CAM_STREAM mode_rc=0 mode_select=1 readback_rc=0 ms=1001 pclk=3336669 fvld=17 "
+    "lvld=5197 pclk_hz=3333335 fps_x1000=16983 lines_per_frame=305 ...\n"
+    "CAM_GEOM src=lastheight width=326 height=324 bytes=105624 lines_per_frame=305 ...\n"
+    "CAM_FRAME ok=1 rc=0 addr=0x8000ce80 phys=0x1000ce80 width=326 height=324 "
+    "bytes=105624 ... min=0 max=255 mean_x100=8696 sum=9185093 saweof=1\n"
+    "CAM_RESULT shield=1 ok=1") + """
+
+Three fields carry the health of the capture.
+
+`model_id=0x01b0` is the sensor answering on the control bus, which is a different bus from
+the one the pixels arrive on — a sensor can answer here and send no pixels at all.
+
+`saweof=1` says the capture unit stopped because the sensor marked the end of a frame, not
+because a byte counter ran out. Those two cases produce the same number of bytes and
+different pictures.
+
+`bytes=105624` is 326 x 324. The sensor sends 324 lines of 324 pixels and the capture unit
+pads each line to 326 bytes, so the two pad bytes per line are dropped when the frame is
+read. `sum=9185093` is the guest's own total over all 105,624 bytes, and the next cell adds
+up the bytes that arrive here and compares the two.""")
+
+md("""### 1.5 Read the frame out of the board's memory and look at it
+
+*On the board, then on the instance.* The frame is sitting in the card's DRAM. Nothing has
+copied it anywhere: `camera` reads it out at the address the guest printed, and `get`
+brings the bytes across.""")
+code('''lab.board("camera")
+f = lab.board("get", "frame.raw", binary=True, verbose=False)
+raw = f.stdout
+open("frame.raw", "wb").write(raw)
+
+said = int([l for l in console.splitlines() if l.startswith("CAM_FRAME ")][0]
+           .split("sum=")[1].split()[0])
+print(f"{len(raw):,} bytes here, guest said sum={said:,}, these bytes sum to {sum(raw):,}")''')
+md("""Expected:
+
+""" + fence("105,624 bytes here, guest said sum=9,185,093, these bytes sum to 9,185,093") + """
+
+The frame is one byte per pixel, and every pixel sits under a colour filter: blue on even
+rows and even columns, red on odd and odd, green on the other two. One RGB pixel is made
+from each 2x2 group, which is exact — nothing is interpolated and no colour is guessed.
+The sensor is mounted upside down on the shield, so the picture is turned through 180
+degrees afterwards. Finally each channel is scaled to a common mean, which is what takes
+the room's lighting out of the colours.""")
+code('''import numpy as np, matplotlib.pyplot as plt
+
+STRIDE, W, H = 326, 324, 324
+m = np.frombuffer(raw, np.uint8).reshape(H, STRIDE)[:, 2:2 + W]   # drop the two pad bytes
+B = m[0::2, 0::2].astype(np.uint16)
+G = (m[0::2, 1::2].astype(np.uint16) + m[1::2, 0::2]) // 2
+R = m[1::2, 1::2].astype(np.uint16)
+rgb = np.rot90(np.dstack([R, G, B]).astype(np.uint8), 2)          # sensor mounted inverted
+
+for ch in range(3):                                               # each channel to one mean
+    v = rgb[:, :, ch].astype(np.uint32)
+    mean = max(int(v.mean()), 1)
+    rgb[:, :, ch] = np.minimum((v * 110 + mean // 2) // mean, 255)
+
+plt.figure(figsize=(4, 4))
+plt.imshow(rgb)
+plt.axis("off")
+plt.title(f"{rgb.shape[1]}x{rgb.shape[0]} from your card", fontsize=9)
+plt.show()''')
+md("""Expected: whatever your camera is pointing at, 162 x 162 and in colour. Coloured
+single pixels scattered over it are the sensor's own hot pixels.
+
+The detector in Unit 2 reads its frames through this same arithmetic, at 64 x 64 rather
+than 162 x 162: same filter pattern, same rotation, same per-channel scaling. The deploy
+front end and the C on the board are checked against each other byte for byte, because a
+detector trained on one set of colours and fed another is wrong in a way that still looks
+like a picture.""")
+
+md("""### 1.6 How the board says what exists, and how an image says what it uses
+
+Two separate files decide what a Zephyr image can touch, and keeping them apart is what
+lets one source build for several machines.
+
+**The devicetree says what the hardware is.** `boards/chipyard/pynqz1_all_f40` describes
+this SoC: an I2C controller at `0x1004_0000`, the capture unit at `0x1008_0000`, a GPIO
+controller, the six LEDs, the four buttons, and which interrupt each one raises. It is a
+description, and describing something costs nothing.
+
+**Kconfig says what the image uses.** The board's `_defconfig` turns on the frameworks that
+every image for this board needs — `CONFIG_I2C`, `CONFIG_GPIO`, the console — and leaves the
+rest to the application. The display is the clearest case: the OLED is on the board and has
+a node, and `CONFIG_DISPLAY` is still off, so an image that has no use for a display does
+not carry the driver. The display sample turns it on in its own `prj.conf`, which is where
+an application's choices belong.
+
+Read both for the image you just built:""")
+code('''lab.sh("""grep -A7 'ospi@10080000' ~/out/cam_capture/zephyr/zephyr.dts \\
+  | sed 's,[[:space:]]*/[*].*[*]/,,' | grep -v '^$' && echo --- && \\
+grep -A6 'buttons: buttons' ~/out/cam_capture/zephyr/zephyr.dts \\
+  | sed 's,[[:space:]]*/[*].*[*]/,,' | grep -v '^$'""")''')
+md("Expected — the camera node, then the four buttons:\n\n" + fence(
+    "ospi0: ospi@10080000 {\n"
+    '        compatible = "ucbbar,ospi-hm01b0";\n'
+    "        reg = < 0x10080000 0x1000 >;\n"
+    "        interrupt-parent = < &plic >;\n"
+    "        interrupts = < 0xd 0x1 >;\n"
+    "        frame-buffer-depth = < 0x200 >;\n"
+    "        sensor-i2c = < &i2c0 >;\n"
+    '        status = "okay";\n'
+    "---\n"
+    "buttons: buttons {\n"
+    '        compatible = "gpio-keys";\n'
+    "        debounce-interval-ms = < 0x1e >;\n"
+    "        btn0: btn0 {\n"
+    "                gpios = < &gpio0 0x6 0x0 >;") + """
+
+The camera node carries `compatible = "ucbbar,ospi-hm01b0"` and there is **no Zephyr driver
+for it**. The sample drives those registers itself and polls them, and the node is still
+worth having: `reg` is where the registers are, `interrupts` records the interrupt the
+capture unit raises, and `sensor-i2c` points at the controller the sensor's control port is
+on. That control port has no node of its own — it is address `0x24` on the same I2C
+controller the display sits on at `0x3c`, reached through the controller rather than
+through a node of its own.
+
+The four buttons are declared as `gpio-keys` with aliases `sw0` to `sw3`, and the board's
+own comment gives the reason. An application that only wants to read a button gets
+`GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios)`, which carries the pin number and the polarity
+with it, so nobody has to know that BTN0 is pin 6 and nobody can get the polarity backwards.
+And `gpio-keys` costs nothing unless an image asks for it: `CONFIG_INPUT` is not on by
+default, so on an image that does not set it these nodes bind no driver, connect no
+interrupt and add no bytes.
+
+Now the other half — what this image actually asked for:""")
+code('''lab.sh("grep -E '^CONFIG_(I2C|I2C_SIFIVE|GPIO|GPIO_SIFIVE|DISPLAY|INPUT|SSD1306)=' "
+       "~/out/cam_capture/zephyr/.config | sort")''')
+md("Expected — four lines, and what is missing matters as much:\n\n" + fence(
+    "CONFIG_GPIO_SIFIVE=y\nCONFIG_GPIO=y\nCONFIG_I2C_SIFIVE=y\nCONFIG_I2C=y") + """
+
+`CONFIG_I2C_SIFIVE` and `CONFIG_GPIO_SIFIVE` are on and nobody wrote them down: each is
+default-y once the devicetree has an enabled node the driver matches, so the board's
+defconfig only names the framework. `CONFIG_DISPLAY` and `CONFIG_INPUT` are absent, so this
+image carries no display driver and no button driver, on a board that has both.""")
+
+md("""### 1.7 Adding what the board does not declare, and building the same source for a simulator
+
+**An overlay adds to the devicetree for one application.** The display sample ships
+`oled.overlay` beside itself, which enables the I2C controller and adds a second display
+node at address `0x3d` — the same panel is sold at either address. The overlay merges with
+what the board already declares rather than replacing it, and the build is told to use it
+by name:
+
+""" + fence(
+    "west build -b chipyard_pynqz1_all_f40 samples/oled_status \\\n"
+    "    -- -DBOARD_ROOT=$IISWC_ROOT \\\n"
+    "       -DEXTRA_DTC_OVERLAY_FILE=$IISWC_ROOT/samples/oled_status/oled.overlay") + """
+
+`EXTRA_DTC_OVERLAY_FILE` appends to whatever the build found on its own;
+`DTC_OVERLAY_FILE` replaces the lot. An application can also have an overlay picked up
+without naming it, by putting it at `<app>/boards/<board>.overlay` — the same rule applies
+to Kconfig fragments at `<app>/boards/<board>.conf`.
+
+**The same guest, built for a simulator, needs different Kconfig — and this is the
+interesting case.** One of the tracing samples has a `boards/spike_riscv64.conf` beside it,
+picked up by that rule, and its whole content is a handful of settings. The important one:
+
+""" + fence(
+    "# Target 0, not 1: spike's sink is the file writer that emits tacit.out / tacit.log /\n"
+    "# tacit.debug into the CWD. It needs no address, and there is no SiFive InclusiveCache\n"
+    "# control node at 0x2010000 in the simulator -- the L2 flush the FPGA needs would take\n"
+    "# a store access fault here.\n"
+    "CONFIG_TACIT_MB_SINK_DMA=n") + """
+
+On the SoC the trace encoder writes into DRAM, and the guest must then flush the L2 or the
+ARM reads stale bytes — the same flush the camera guest above performs before it prints
+where the frame is. The simulator's sink writes a file instead, and it has no cache
+controller at that address, so **the sequence that is correct on the hardware is an illegal
+access on the simulator**. One source, two machines, and the difference is a Kconfig
+fragment named after the board rather than a branch in the code.""")
+
 # ======================================================================================
 # Unit 2
 # ======================================================================================
@@ -709,6 +916,117 @@ reduce over 16, 32 and 64 channels, which pack exactly.
 they are 0.91 % and 0.02 % of the frame, and per-dispatch setup is a larger share of what
 they do than the loop is.""")
 
+md("""### 2.6 Moonshine, a model that chooses how much work to do
+
+SignDetLite runs the same eight operators on every frame. The camera hands it a 64x64x3
+image, it returns an 8x8x3 grid of boxes, and the cost is the same whatever the picture
+contains.
+
+Moonshine transcribes speech, and it is built from two halves that cost quite different
+things. The encoder reads a whole four-second window at once and turns it into 165 hidden
+states of 288 values. The decoder then emits one token at a time: each step reads the
+tokens already emitted, chooses the next one, and the run ends when the model chooses
+end-of-sequence. Nothing outside the model says how many tokens that will be.
+
+The two halves therefore have different matrix shapes. Every matrix multiply in the encoder
+is 165 rows tall, because all 165 hidden states pass through the same weights together.
+Every matrix multiply in the decoder is one row tall, because it is producing one token.
+The weights are the same either way, so the decoder reads 18,395,136 bytes of weights to
+perform 18,993,024 multiply-accumulates -- about one multiply per byte -- where the encoder
+gets 165 multiplies out of each byte it reads.
+
+The decoder also gets more expensive as it goes. Each step attends over every token emitted
+so far, so the last step reads 24 keys where the first read one. The lowering unrolls all 24
+steps into straight-line code and grows the key and value cache with an ordinary
+concatenate, so a later step costs a little more than an earlier one.""")
+code('''import json
+
+m = json.load(open("assets/moonshine_shape.json"))
+d, k = m["signdet"], m["moonshine"]
+
+print(f'{d["name"]} runs {d["runs"]}.')
+print(f'  {d["dispatches_per_run"]} dispatches, {d["macs_per_run"]:,} multiply-accumulates,')
+print(f'  {d["cycles_median"]:,} cycles = {d["ms_at_clock"]:.0f} ms at {m["clock_mhz"]} MHz,')
+print(f'  {d["weight_bytes"]:,} bytes of weights.')
+print()
+print(f'{k["name"]} runs {k["runs"]}.')
+print(f'  encoder   {k["encoder_dispatches"]:>4} dispatches, every matrix multiply {k["encoder_gemm_rows"]} rows tall')
+print(f'  prologue  {k["prologue_dispatches"]:>4} dispatches, also {k["encoder_gemm_rows"]} rows tall')
+print(f'  decoder   {k["decoder_dispatches_later_step"]:>4} dispatches per step, every matrix multiply'
+      f' {k["decoder_gemm_rows"]} row tall')
+print(f'            {k["decoder_dispatches_first_step"]} at the first step: there is no cache to append to yet')
+print()
+print(f'  {k["macs_per_token"]:,} multiply-accumulates per token against'
+      f' {k["weight_bytes_per_token"]:,} weight bytes')
+print(f'  = {k["mac_per_weight_byte"]} multiply-accumulates per byte of weight read.')
+print(f'  The encoder does {k["encoder_gemm_rows"]} rows of arithmetic on the same weights;'
+      f' the decoder does one.')
+print()
+print(f'  Self-attention reads {k["self_attention_keys_first_step"]} key at the first step and'
+      f' {k["self_attention_keys_last_step"]} at the last.')
+print(f'  The model stops when it emits end-of-sequence, on average after'
+      f' {k["steps_mean_measured"]:.2f} of the {k["steps_unrolled"]} steps that are compiled in.')
+
+per_utt = (k["encoder_dispatches"] + k["prologue_dispatches"]
+           + k["decoder_dispatches_first_step"]
+           + (k["steps_mean_measured"] - 1) * k["decoder_dispatches_later_step"])
+print()
+print(f'  About {per_utt:,.0f} dispatches for one utterance, against'
+      f' {d["dispatches_per_run"]} for one frame of the detector.')''')
+md("Expected:\n\n" + fence(
+    "SignDetLite runs once per camera frame.\n"
+    "  8 dispatches, 7,532,544 multiply-accumulates,\n"
+    "  9,511,271 cycles = 238 ms at 40 MHz,\n"
+    "  72,276 bytes of weights.\n"
+    "\n"
+    "Moonshine Tiny runs encoder once per four-second window, then the decoder once per "
+    "output token.\n"
+    "  encoder    117 dispatches, every matrix multiply 165 rows tall\n"
+    "  prologue    12 dispatches, also 165 rows tall\n"
+    "  decoder    176 dispatches per step, every matrix multiply 1 row tall\n"
+    "            164 at the first step: there is no cache to append to yet\n"
+    "\n"
+    "  18,993,024 multiply-accumulates per token against 18,395,136 weight bytes\n"
+    "  = 1.03 multiply-accumulates per byte of weight read.\n"
+    "  The encoder does 165 rows of arithmetic on the same weights; the decoder does one.\n"
+    "\n"
+    "  Self-attention reads 1 key at the first step and 24 at the last.\n"
+    "  The model stops when it emits end-of-sequence, on average after 11.25 of the 24 "
+    "steps that are compiled in.\n"
+    "\n"
+    "  About 2,098 dispatches for one utterance, against 8 for one frame of the detector."))
+md("""Three things follow from that shape, all measured on this hardware.
+
+**The operator worth optimising is not a matrix multiply.** Moonshine's encoder evaluates
+GELU 1,378,656 times per utterance -- twice in the convolutional stem and once in each of
+the six encoder layers. Under per-tensor symmetric quantisation GELU is a map from 256
+possible input bytes to 256 output bytes, so it can be a table built once from the reference
+expression. Measured on a transformer feed-forward block, the table runs the whole
+pass 167.48x faster than the float version, 153.09x on a real dispatch, and takes the whole
+block 4.72x faster because GELU was 69.7 % of it -- and the output is bit-identical to the
+reference on every row of the check. It is worth saying why it is fast: the win is the
+change of layout. The kernel issues no special instruction at all.
+
+**The image is almost all weights.** The build that carries both models is 1.0 MB of code
+against 62.8 MB of read-only data, and 63.9 MB reaches the board. Re-tuning one kernel
+changes 15 KB of code and moves the weights to new addresses without changing a byte of
+them: 65.5 MB of weight symbols are identical in content and merely relocated. A
+shift-aware binary delta between the two images measures 257 KB, 261 times smaller than
+sending the image again.
+
+**The two models meet again in the schedule.** In Unit 5 you solve a schedule in which
+SignDetLite is the periodic workload -- a detector on a one-second budget, four instances --
+and Moonshine is the non-periodic one that has to fit around it. The difference in this
+section is why a scheduler has to treat them differently: the detector's cost is known
+before it runs and Moonshine's is not.
+
+The weights come from different places too, and that changes what can be published.
+Moonshine's are a public checkpoint, pinned to one revision and checked file by file against
+a recorded sha256, needing no account and no licence to accept. SignDetLite's are trained on
+the German Traffic Sign Detection Benchmark, whose licence could not be established, so
+nothing that embeds them is published -- a substitute set of random weights lowers to a
+byte-identical kernel, which is how the pipeline can be shown without shipping the model.""")
+
 # ======================================================================================
 # Unit 3
 # ======================================================================================
@@ -716,12 +1034,13 @@ md("""---
 
 ## Unit 3 · TACIT: instruction-level tracing of two heterogeneous harts on one timeline
 
-**Part runs today.** A trace encoder in the Rocket core writes retired instructions to
-memory; a decoder turns them into a timeline.
+**Runs on your board today · needs the uplink.** A trace encoder in the Rocket core writes
+every retired instruction to memory as it goes; a decoder turns that back into a timeline of
+function calls.
 
-Capture has no attendee sequence: your card carries `0x5A5A0038`, TACIT needs
-`0x5A5A0039`, and the on-board decoder is not shipped. Capture is shown from the
-front.""")
+You take a capture on your own card. Decoding one takes eight minutes and a decoder that is
+not on this instance, so the decoded timelines in this unit are captures taken on the same
+silicon beforehand.""")
 
 md("""### 3.1 Cache the trace viewer
 
@@ -766,18 +1085,130 @@ arithmetic.
 right-click `rocket_tacit_trace.perfetto.json`, choose Download, and drag the file into
 the Perfetto tab you cached in 3.1.""")
 
-md("""### Two heterogeneous harts on one timeline
+md("""### A trace records a stretch of time, not a program
 
-**Read-and-inspect, not runnable.** `scripts/90_b156_tacit_window.sh` needs the lowered
-SignDetLite tree, its eight replay frames and a board carrying bitstream `0x5A5A0039`,
-none of which is in this repository, and the 45.7 MB merged trace it produced is not
-shipped either. What is shipped is the measured lane table the gates were computed from:
-`assets/lane_timeline.json`, 9 KB.
+*Nothing to type.* Before capturing one, it is worth seeing what a capture is a capture
+**of**. Below are two runs of one guest doing one piece of work. The encoder is armed in two
+different places: in the first, in the reset vector, before a line of the program has run;
+in the second, at the top of `main()`.
+
+| | armed at the reset vector | armed in `main()` |
+|---|---|---|
+| the work done, counted by the guest | **24,093** | **24,093** |
+| cycles the encoder was enabled | 1,636,333 | 679,794 |
+| of those, before `main()` | **958,012 (58.5 %)** | 0 |
+| bytes of trace | 147,093 | 135,182 |
+| events in the timeline | 10,064 | 9,839 |
+| **distinct function names** | **93** | **42** |
+| **first event** | **`z_prep_c`** | **`__floatsidf`** |
+
+The two captures are 8.8 % apart on bytes and 2.3 % apart on events, and their five busiest
+functions are the same five in the same order. **A size check cannot tell them apart**, and
+neither can a count of packets or of instructions.
+
+What separates them is where the trace opens. One begins in `z_prep_c`, which zeroes the
+BSS, and goes on through the early boot; the other begins in `__floatsidf`, the compiler's
+integer-to-double helper, because by then boot is long finished. Fifty-eight per cent of the
+first capture is code nobody in the room wrote, and it costs 8.8 % of the bytes, because
+boot is mostly straight-line and the encoder emits a packet per taken branch.
+
+Two fields tell you which kind of capture you are holding: the name of the first event, and
+the number of distinct names, 93 against 42.""")
+
+md("""### Capture both harts on your own card
+
+*On the instance, then on the board.* This capture runs the traffic-sign detector on hart 0
+and a wake-word model on hart 1 at the same time, with the trace encoder armed from the
+reset vector on both, and stops both encoders at one wall-clock deadline 13 seconds later.
 
 The two harts hold different extensions — hart 0 has the packed-SIMD path the convolution
-kernels use, hart 1 is scalar — so the same frame costs them very different amounts of
-time. One wall clock bounds both lanes, and the question is whether both work through the
-whole window and stop together.""")
+kernels use, hart 1 is scalar — so the same frame costs them very different amounts of time.
+One wall clock bounds both lanes, and the question is whether both work through the whole
+window and stop together.
+
+Build the capture guest. It carries both models, so it takes a few minutes:""")
+code('''lab.sh("""cd /home/ubuntu/tut && source /home/ubuntu/tut/env.sh && \\
+./scripts/90_b156_tacit_window.sh --name lab3 --build-only""", timeout=1800)''')
+md("""Expected, at the end: `lab3_duo: bin=1096544 B  window_ms=13000 frames=0 kws_s=60`.
+
+Upload the guest, load the tracing bitstream, and run the window. The card carries two
+bitstreams and this is the other one — it has the trace encoder and no dispatch engine —
+so the last cell of this unit puts your card back:""")
+code('''lab.board_put("/home/ubuntu/tut/out/lab3_duo/zephyr.bin", "tacit.bin")
+lab.board("bitstream", "trace")
+lab.board("run", "tacit", timeout=300)''')
+md("""Expected: a 1,096,544-byte push in about eight seconds, the bitstream in fourteen, and
+the run in seventy-five. Now read what the board says about its own capture:""")
+code('''c = lab.board("get", "console.out", binary=True, verbose=False)
+for line in c.stdout.decode("utf-8", "replace").splitlines():
+    if line.startswith(("DUO_TRACE_ARM", "DUO_TRACE_HART", "DUO_TRACE_GATE", "SD_REPLAY_END",
+                        "DUO_DONE")):
+        print(line)''')
+md("""Expected, measured on card 3:
+
+""" + fence(
+    "DUO_TRACE_ARM hart=0 from_reset=1 buf=0x81000000 addr_rb=0x81000000 span=67108864 "
+    "count_at_main=170040 ok=1\n"
+    "DUO_TRACE_ARM hart=1 from_reset=1 buf=0x85000000 addr_rb=0x85000000 span=150994944 "
+    "count_at_main=93040 ok=1\n"
+    "SD_REPLAY_END decisions_ok=1 tensors_ok=1 thr_match=1\n"
+    "DUO_TRACE_HART hart=0 buf=0x81000000 bytes=23596344 span_cycles=534655340 "
+    "bytes_per_s=1765349 buf_span=67108864 full_pct=35 armed=1 ...\n"
+    "DUO_TRACE_HART hart=1 buf=0x85000000 bytes=15962636 span_cycles=534655340 "
+    "bytes_per_s=1194237 buf_span=150994944 full_pct=10 armed=1 ...\n"
+    "DUO_TRACE_GATE overrun=0 overlap=0 base0=0x81000000 end0=0x82680d38 base1=0x85000000 "
+    "end1=0x85f3920c\n"
+    "DUO_DONE want=2 got=2 sign=1 kws=1") + """
+
+`count_at_main` is the on-ramp above, in this capture: 170,040 bytes of trace were already
+written by the time hart 0 reached `main()`.
+
+`overrun=0 overlap=0` is the check that matters before reading any of it. The trace sink has
+**no limit register** — it writes forward from its base address and neither wraps nor stops
+— so a lane that produced more than its region holds carries straight on into the next
+lane's, and both traces still decode perfectly. The guest therefore compares what each lane
+wrote with the region it was given, and says so.
+
+Your byte counts will differ from these in the last few thousand: the window is a wall
+clock, and the work that lands inside it is not identical twice.
+
+Now read the two traces out of the card's memory. `drain` takes no arguments — the addresses
+and the lengths come from the lines above, from the board's own registers — and it
+compresses on the card, so 39 MB of trace crosses as 3 MB:""")
+code('''d = lab.board("drain", timeout=900, verbose=False)
+import json
+drain = json.loads(d.stdout)
+print(f'{drain["lanes"]} lanes, {drain["bytes"]:,} bytes of trace, '
+      f'{drain["gz_bytes"]:,} bytes compressed')
+for lane in drain["drained"]:
+    got = lab.board("get", lane["name"], binary=True, verbose=False).stdout
+    open(lane["name"], "wb").write(got)
+    print(f'  hart {lane["hart"]}: {lane["name"]}, {len(got):,} B '
+          f'(the card declared {lane["gz_bytes"]:,})')''')
+md("""Expected, in about a minute:
+
+""" + fence(
+    "2 lanes, 39,558,980 bytes of trace, 3,148,637 bytes compressed\n"
+    "  hart 0: tacit0.out.gz, 2,604,891 B (the card declared 2,604,891)\n"
+    "  hart 1: tacit1.out.gz, 543,746 B (the card declared 543,746)") + """
+
+Those two files are your capture. Decoding them into a timeline is the eight-minute job this
+instance has no decoder for; the decoded version of the same capture is below.
+
+**Put your card back**, before anything else in the notebook touches it:""")
+code('''lab.board("bitstream", "all")
+lab.board("run", "boot_info", timeout=300)''')
+md("""Expected: `\"loaded\": \"all\"`, then `\"ran\": \"boot_info\"`. The card's loader checks the
+bitstream as it comes up and the check is in the run log:
+
+""" + fence("MAGIC = 0x5A5A0038 OK") + """
+
+The OLED restarts at `up 0:00`.""")
+
+md("""### Two heterogeneous harts on one timeline
+
+The measured lane table from a decoded capture is shipped beside this notebook:
+`assets/lane_timeline.json`, 9 KB.""")
 code('''import json
 lanes = json.load(open("assets/lane_timeline.json"))
 for pid, lane in lanes["lanes"].items():
@@ -809,6 +1240,66 @@ rules at the right are where each lane's last `mb_pext_conv` frame ends.
 (1.77 MB/s). The same lane measured over a run where it idled 80 % of the window gives
 **0.0084**, five times lower, because a spin loop is cheap in trace bytes. Size a TACIT
 buffer from a window the lane worked through.""")
+
+md("""### Optional: open the trace inside this page
+
+*Optional.* The trace viewer runs in an iframe in the cell output and is handed the trace
+over `postMessage`, so the file never leaves your instance and you never download it. The
+viewer asks once whether it should trust this page with the file — answer **Yes** and the
+timeline appears in the frame.""")
+code('''import os
+from pathlib import Path
+from IPython.display import HTML, display
+
+# The path is relative to the root this instance's Jupyter is serving, because that is what
+# /files/ resolves against.
+home = Path.home()
+root = next((r for r in (home / "work", home) if r in t.parents), home)
+url = "/files/" + os.path.relpath(t, root)
+print("fetching", url)
+
+# NO BACKSLASH BELOW, ON PURPOSE.  The HTML is an ordinary Python string, so a JS
+# "join('\\n')" written here would become a literal newline inside a JS string literal --
+# a syntax error, and the symptom is a script that silently never runs.
+display(HTML("""
+<div id="pflog" style="font:12px/1.5 monospace;white-space:pre;border:1px solid #888;padding:6px">loading ...</div>
+<iframe id="pfui" src="https://ui.perfetto.dev/#!/"
+        style="width:100%;height:520px;border:1px solid #888;margin-top:6px"></iframe>
+<script>
+(function () {
+  var NL = String.fromCharCode(10), lines = [];
+  var log = document.getElementById('pflog');
+  function say(s) { lines.push(s); log.textContent = lines.join(NL); }
+  var f = document.getElementById('pfui'), buf = null, sent = false, tries = 0, timer = null;
+  f.addEventListener('load', function () { say('viewer loaded'); });
+  fetch('""" + url + """', {credentials: 'same-origin'})
+    .then(function (r) { say('fetch -> HTTP ' + r.status); return r.arrayBuffer(); })
+    .then(function (b) { buf = b; say('trace in the page: ' + b.byteLength + ' bytes'); })
+    .catch(function (e) { say('fetch failed: ' + e); });
+  window.addEventListener('message', function (e) {
+    if (e.data !== 'PONG' || sent || !buf) { return; }
+    clearInterval(timer); sent = true;
+    f.contentWindow.postMessage({perfetto: {buffer: buf, title: 'Rocket SoC'}},
+                                'https://ui.perfetto.dev');
+    say('handed to the viewer -- answer Yes in the frame below');
+  });
+  timer = setInterval(function () {
+    tries++;
+    f.contentWindow.postMessage('PING', 'https://ui.perfetto.dev');
+    if (tries > 60) { clearInterval(timer); say('the viewer did not answer'); }
+  }, 500);
+})();
+</script>
+"""))''')
+md("""Expected, in the box above the frame:
+
+""" + fence(
+    "fetch -> HTTP 200\n"
+    "trace in the page: 1989396 bytes\n"
+    "viewer loaded\n"
+    "handed to the viewer -- answer Yes in the frame below") + """
+
+Then the frame asks whether to trust this page with the file, and **Yes** loads it.""")
 
 # ======================================================================================
 # Units 4 and 5
@@ -1001,6 +1492,82 @@ md("""Expected, and it is the golden row to the digit:
 
 Same interpreter, same spec and same data as the cell above it; only the path the script
 was named by differs.""")
+
+# ======================================================================================
+# The demos
+# ======================================================================================
+md("""---
+
+## The demos
+
+**Shown from the front · nothing to type.** Both demos are the models from Units 2 and 5
+running on the same SoC you have been building for, with a person in front of the board
+instead of a baked input.""")
+
+md("""### Speech to text, on the board
+
+A four-second window of speech, recorded through the board's microphone and transcribed by
+the board. Nothing is sent anywhere: the weights are in the image, the audio never leaves
+the SoC, and the host is a power supply and a console.
+
+The operator claps — the guest measures the room for two seconds first, so it knows what a
+clap is against this room's noise floor — and then speaks. The lamp goes green while the
+microphone is recording and blue while the model is running. The transcript arrives on the
+console and on the glass.
+
+Recording and transcribing do not overlap, by construction: while the model runs, nothing is
+draining the microphone.
+
+**The number this demo is really about is its latency.** Transcribing one four-second window
+takes about **4.7 seconds** of compute on the board, measured from live microphone audio, so
+the board runs at about **1.18 times real time** and falls steadily behind a speaker who does
+not stop. That is the figure to quote for a live run.
+
+The faster figure you will see for the same model and the same board — **0.89 times real
+time** — is four windows batched together. Every matrix multiply in the decoder is one row
+tall for one utterance and four rows tall for four, and the weights are read once either way,
+so batching buys most of a factor of two. A live demo cannot batch: there is one speaker and
+the next window does not exist yet. The word-error figure measured alongside that batched run
+was taken with a thousand-tap equaliser running on the ARM core, which this image does not
+carry; the same run without the equaliser measured more than a fifth of words wrong.""")
+
+md("""### Traffic signs on the board
+
+The camera, the detector Unit 2 compiled, and one word on the display: **STOP**, **YIELD**,
+or **NO SIGN**. The board runs on its own — point the camera at a sign and the word changes.
+
+One inference is **237 to 238 ms**, measured over four hundred of them, and that is the same
+figure the compilation flow in Unit 2 predicted and then measured on a baked frame. A whole
+frame takes about **0.55 s**, roughly 1.8 frames a second, and the inference is less than
+half of it: reading the Bayer frame into a 64x64x3 image, sweeping the L2 so the ARM can see
+the frame, and writing the display take the rest.
+
+The demo carries its own correctness check. Eight real camera captures are baked into the
+image together with the answer the host computed for each — the class, the cell of the grid,
+the confidence, and all 192 output bytes. At boot the board runs those eight through the
+same kernels and compares: **8 of 8 decisions and 8 of 8 tensors, with no byte differing by
+even one**. One of the eight is a frame the host declines as not confident enough, and the
+board declines it too, which is the only way to check that behaviour at all.
+
+At the default threshold an empty bench reads as a sign about half the time, so the
+threshold is raised for a demo in a room full of people. That is a measurement of one room
+rather than a property of the detector.""")
+
+md("""### What is not finished
+
+Three things in these two demos are worth naming now rather than discovering at the front of
+the room.
+
+The speech demo has a build for the same bitstream your card carries, so it could run on a
+seat card rather than only on the bench board. That build exists and has not been run on a
+board.
+
+A variant that starts recording on a button press instead of a clap is written and has not
+been built or run.
+
+The speech demo reads its transcript from the guest's console. That works on the bench board
+and not on a seat card, where the console device is not readable by the account the tools
+run as.""")
 
 nb = {
     "cells": cells,
