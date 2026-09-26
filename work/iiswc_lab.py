@@ -376,6 +376,61 @@ def trace_summary(path: str | Path, top: int = 10) -> None:
         print(f"{name:<26}{v:>12,}{100 * v / total:>7.1f}%{calls[name]:>9,}")
 
 
+
+def show_perfetto(trace_path: str | Path) -> None:
+    """Open a Perfetto timeline inside this notebook, without the file leaving the instance.
+
+    The viewer runs in an iframe and is handed the bytes over `postMessage`, so nothing is
+    uploaded anywhere and nothing is downloaded to the reader's laptop.  The handshake is
+    the fiddly part and it is all here: the viewer answers PING with PONG only once it has
+    booted, and a buffer posted before that is dropped silently.
+    """
+    import os
+    from IPython.display import HTML, display
+
+    t = Path(trace_path)
+    # The path is relative to the root this instance's Jupyter is serving, because that is
+    # what /files/ resolves against.
+    home = Path.home()
+    root = next((r for r in (home / "work", home) if r in t.parents), home)
+    url = "/files/" + os.path.relpath(t, root)
+    print("fetching", url)
+
+    # NO BACKSLASH BELOW, ON PURPOSE.  The HTML is an ordinary Python string, so a JS
+    # "join('\n')" written here would become a literal newline inside a JS string literal --
+    # a syntax error, and the symptom is a script that silently never runs.
+    display(HTML("""
+<div id="pflog" style="font:12px/1.5 monospace;white-space:pre;border:1px solid #888;padding:6px">loading ...</div>
+<iframe id="pfui" src="https://ui.perfetto.dev/#!/"
+        style="width:100%;height:520px;border:1px solid #888;margin-top:6px"></iframe>
+<script>
+(function () {
+  var NL = String.fromCharCode(10), lines = [];
+  var log = document.getElementById('pflog');
+  function say(s) { lines.push(s); log.textContent = lines.join(NL); }
+  var f = document.getElementById('pfui'), buf = null, sent = false, tries = 0, timer = null;
+  f.addEventListener('load', function () { say('viewer loaded'); });
+  fetch('""" + url + """', {credentials: 'same-origin'})
+    .then(function (r) { say('fetch -> HTTP ' + r.status); return r.arrayBuffer(); })
+    .then(function (b) { buf = b; say('trace in the page: ' + b.byteLength + ' bytes'); })
+    .catch(function (e) { say('fetch failed: ' + e); });
+  window.addEventListener('message', function (e) {
+    if (e.data !== 'PONG' || sent || !buf) { return; }
+    clearInterval(timer); sent = true;
+    f.contentWindow.postMessage({perfetto: {buffer: buf, title: 'Rocket SoC'}},
+                                'https://ui.perfetto.dev');
+    say('handed to the viewer -- answer Yes in the frame below');
+  });
+  timer = setInterval(function () {
+    tries++;
+    f.contentWindow.postMessage('PING', 'https://ui.perfetto.dev');
+    if (tries > 60) { clearInterval(timer); say('the viewer did not answer'); }
+  }, 500);
+})();
+</script>
+"""))
+
+
 # --------------------------------------------------------------------------------------
 # Finding this repository's committed data, wherever the notebook was started
 # --------------------------------------------------------------------------------------
@@ -407,6 +462,290 @@ def repo_file(rel: str) -> Path | None:
         if (root / rel).exists():
             return root / rel
     return None
+
+
+# --------------------------------------------------------------------------------------
+# Reading a ModelBlaster lowering (Unit 2).
+#
+# Every one of these used to be an ad-hoc block in a notebook cell -- a regex over
+# weights.c, a scrape of the lowering script's stdout, three separate copies of "find a
+# line and print a numbered window".  The parsing is not the lesson; what the files
+# CONTAIN is the lesson.  So the parsing lives here under a name that says what it
+# answers, and a cell asks the question in one line.
+# --------------------------------------------------------------------------------------
+class Lowering:
+    """One lowered model on disk -- what a lowering run left behind.
+
+    `ir/` holds the graph and the quantised arrays, `gen/` holds the C the board
+    compiles, and they always travel together, so a notebook names the run once and
+    reads from it by attribute instead of rebuilding paths in every cell.
+    """
+
+    def __init__(self, gen_dir: str | Path):
+        self.gen = Path(gen_dir)
+        self.root = self.gen.parent
+        self.ir = self.root / "ir"
+        self._cache: dict = {}
+
+    @classmethod
+    def from_run(cls, result) -> "Lowering":
+        """Locate the lowering a script just produced, from the script's own output.
+
+        The script prints its output directory as the last word of a `gen ...` line.
+        Reading it back is what lets a cell pass `--name` freely: a hardcoded path is
+        wrong the moment somebody changes the name, and wrong by silently reading the
+        PREVIOUS run, which still parses.
+        """
+        for line in reversed(result.stdout.splitlines()):
+            if line.strip().startswith("gen "):
+                return cls(line.split()[-1])
+        raise LookupError(
+            "that run printed no 'gen <path>' line, so it produced no lowering -- "
+            "re-run the cell with quiet=False to see why")
+
+    def __repr__(self) -> str:
+        return f"Lowering({self.root.name})"
+
+    @property
+    def graph(self) -> dict:
+        """`ir/graph.json` -- operators, tensors, and which of them reach a kernel."""
+        if "graph" not in self._cache:
+            self._cache["graph"] = json.loads((self.ir / "graph.json").read_text())
+        return self._cache["graph"]
+
+    @property
+    def picks(self) -> dict:
+        """`gen/kernel_picks.json` -- the algorithm chosen for each operator kind."""
+        if "picks" not in self._cache:
+            self._cache["picks"] = json.loads(
+                (self.gen / "kernel_picks.json").read_text())["picks"]
+        return self._cache["picks"]
+
+    @property
+    def weights(self):
+        """`ir/weights.npz` -- the quantised arrays, including the requantise grid."""
+        if "weights" not in self._cache:
+            import numpy as np
+            self._cache["weights"] = np.load(self.ir / "weights.npz")
+        return self._cache["weights"]
+
+    def md5(self, rel: str) -> str:
+        """The digest of one file in this lowering, named relative to the run root."""
+        import hashlib
+        return hashlib.md5((self.root / rel).read_bytes()).hexdigest()
+
+    def line_count(self, rel: str) -> int:
+        """How many lines one generated file has."""
+        return len((self.root / rel).read_text().splitlines())
+
+
+def show_source(path: str | Path, around: str, lines: int = 16, before: int = 0) -> None:
+    """Print a numbered window of a source file, anchored on the first line containing `around`.
+
+    Anchored rather than a fixed line range because these files are GENERATED: a
+    different calibration or backend moves every line number, and a window pinned to
+    numbers quietly shows the wrong code rather than failing.
+    """
+    text = Path(path).read_text().splitlines()
+    hit = next((i for i, l in enumerate(text) if around in l), None)
+    if hit is None:
+        raise LookupError(f"{Path(path).name} has no line containing {around!r}")
+    start = max(hit - before, 0)
+    for i, line in enumerate(text[start:start + lines], start=start + 1):
+        print(f"{i:>4}  {line}")
+
+
+def show_graph(low: Lowering) -> None:
+    """The whole model as the compiler sees it: operators, shapes, and its digest."""
+    g = low.graph
+    print(f'{g["name"]}  {g["quant"]}  {len(g["ops"])} operators, '
+          f'{len(g["dispatches"])} of them dispatched to a kernel')
+    print(f'input  {g["input"]["tensor"]:<8} {g["tensors"][g["input"]["tensor"]]["shape"]}')
+    print(f'output {g["output"]["tensor"]:<8} {g["tensors"][g["output"]["tensor"]]["shape"]}')
+    print()
+    for n in g["ops"]:
+        shape = " ".join(f"{k}={v}" for k, v in n.get("shape", {}).items())
+        print(f'  {n["name"]:<9} {n["op"]:<14} {n["inputs"][0]:>8} -> {n["outputs"][0]:<9} {shape}')
+    print()
+    print("graph.json md5", low.md5("ir/graph.json"))
+
+
+def show_kernel_choices(low: Lowering) -> None:
+    """Which algorithm each operator kind was lowered to, and how much work it carries."""
+    g, picks = low.graph, low.picks
+    for op in sorted(picks):
+        n = sum(1 for o in g["ops"] if o["op"] == op)
+        print(f'{op:<14} {picks[op]["source"]:<18} {picks[op]["algorithm"]}')
+        print(f'{"":<14} serves {n} of the {len(g["ops"])} operators')
+        print(f'{"":<14} {picks[op]["path"]}')
+    mac = sum(o["shape"]["OH"] * o["shape"]["OW"] * o["shape"]["OC"] * o["shape"]["IC"]
+              * o["shape"]["KH"] * o["shape"]["KW"]
+              for o in g["ops"] if o["op"] == "conv2d_s8_pc")
+    print(f'\nconv2d_s8_pc carries {mac:,} multiply-accumulates -- every one in the graph.')
+
+
+def requant_arrays(low: Lowering) -> list[tuple[str, int, int, int]]:
+    """Find the per-channel requantise arrays in `gen/weights.c`.
+
+    Returns (name, entries, first line, last line) for each, 1-based, so a caller can
+    both count them and print one.
+    """
+    import re
+
+    w = (low.gen / "weights.c").read_text().splitlines()
+    found, i = [], 0
+    while i < len(w):
+        m = re.search(r"(\w+_output_(?:multiplier|shift)_per_oc_\w+)\[(\d+)\]", w[i])
+        if not m:
+            i += 1
+            continue
+        j = i
+        while "};" not in w[j]:
+            j += 1
+        found.append((m.group(1), int(m.group(2)), i + 1, j + 1))
+        i = j + 1
+    return found
+
+
+def show_requant_arrays(low: Lowering) -> None:
+    """How much of the generated weights file is the requantise grid, and the first one."""
+    w = (low.gen / "weights.c").read_text().splitlines()
+    arrays = requant_arrays(low)
+    total = sum(b - a + 1 for _, _, a, b in arrays)
+    values = sum(n for _, n, _, _ in arrays)
+    print(f"weights.c is {len(w):,} lines. {total} of them are the requantise grid: "
+          f"{len(arrays)} arrays, {values} int32 values.\n")
+    for name, n, a, b in arrays:
+        print(f"  line {a:>5}  {name:<52} [{n}]")
+    print()
+    print("\n".join(w[arrays[0][2] - 1:arrays[1][3]]))
+
+
+def show_requant_channels(low: Lowering, op: str = "conv1", channels: int = 4) -> None:
+    """The float-to-int arithmetic for one operator, channel by channel.
+
+    Shows what the integer multiplier and shift actually encode: a per-channel weight
+    scale, which is why the stored weights can all saturate the int8 range.
+    """
+    import numpy as np
+
+    g, z = low.graph, low.weights
+    mult, shift = z[f"{op}.output_multiplier_per_oc"], z[f"{op}.output_shift_per_oc"]
+    node = next(n for n in g["ops"] if n["name"] == op)
+    s_in = g["tensors"][node["inputs"][0]]["quant"]["scale"]
+    s_out = g["tensors"][node["outputs"][0]]["quant"]["scale"]
+    print(f"{op}   input scale {s_in:.12f} (= 1/{1 / s_in:.0f})   "
+          f"output scale {s_out:.12f}\n")
+    print("  oc   multiplier  shift          M   implied weight scale   max |W| that fits")
+    for oc in range(channels):
+        M = float(mult[oc]) / 2**31 / 2**int(shift[oc])
+        s_w = M * s_out / s_in
+        print(f"  {oc:>2}   {mult[oc]:>10}  {shift[oc]:>5}   {M:.8f}         {s_w:.8f}   "
+              f"{s_w * 127:.6f}")
+    print(f"\n  ... and {len(mult) - channels} more channels. Every channel saturates at "
+          f"{int(np.abs(z[f'{op}.weight_q']).max())}, which is what per-channel means: the "
+          f"multiplier absorbs the range, not the weights.")
+
+
+def compare_calibration(few: Lowering, many: Lowering,
+                        few_label: str = "64 frames", many_label: str = "256 frames") -> None:
+    """What changes between two calibration runs of the same model, and what does not."""
+    print(f"graph.json md5  {few_label:>10}", few.md5("ir/graph.json"))
+    print(f"                {many_label:>10}", many.md5("ir/graph.json"))
+    a, b = few.weights, many.weights
+    print(f"\n{'array':<34}{'entries':>9}{'differ':>9}")
+    for k in a.files:
+        if "output_" in k:
+            print(f"{k:<34}{a[k].size:>9}{int((a[k] != b[k]).sum()):>9}")
+    print("\nweight_q arrays identical:",
+          all((a[k] == b[k]).all() for k in a.files if k.endswith("weight_q")))
+
+
+def compare_backends(a: Lowering, b: Lowering,
+                     a_label: str = "pext", b_label: str = "scalar") -> None:
+    """The same model lowered for two backends: what the choice changes on disk."""
+    pa, pb = a.picks, b.picks
+    print()
+    for op in sorted(pa):
+        print(f'{op:<14} {a_label:<7} {pa[op]["source"]:<18} {pa[op]["algorithm"]}')
+        print(f'{"":<14} {b_label:<7} {pb[op]["source"]:<18} {pb[op]["algorithm"]}')
+    print()
+    for f in ("ir/graph.json", "gen/weights.c", "gen/kernels.c"):
+        x, y = a.md5(f), b.md5(f)
+        print(f'{f:<16} {"same" if x == y else "differs"}   {x}  {y}')
+    print(f'\nkernels.c   {a.line_count("gen/kernels.c"):>5} lines on {a_label}, '
+          f'{b.line_count("gen/kernels.c"):>4} on {b_label}')
+
+
+# --------------------------------------------------------------------------------------
+# Reading a recorded board run (Unit 2).
+# --------------------------------------------------------------------------------------
+def show_board_provenance(board: dict, arm: str = "pext") -> None:
+    """Where these cycle counts came from, and the console one arm printed."""
+    print(f'{board["script"]}, {board["measured"]} on {board["measured_on"]},')
+    print(f'bitstream {board["soc_magic"]} at {board["clk_hz"] // 10**6} MHz, '
+          f'median of {board["iters"]} inferences.\n')
+    for line in board["arms"][arm]["console"]:
+        print(line[:200] + " ..." if len(line) > 200 else line)
+
+
+def show_board_arms(board: dict, fast: str = "pext", slow: str = "scalar") -> None:
+    """Per-operator cycles for two backends side by side, with each arm's own gate."""
+    p, s = board["arms"][fast], board["arms"][slow]
+    print(f'{"":<9}{"":<15}{"MBP kernels":>14}{"reference C":>15}{"factor":>9}')
+    for a, b in zip(p["ops"], s["ops"]):
+        print(f'{a["name"]:<9}{a["op"]:<15}{a["cycles"]:>14,}{b["cycles"]:>15,}'
+              f'{b["cycles"] / a["cycles"]:>8.2f}x')
+    print(f'{"frame":<24}{p["cycles"]["median"]:>14,}{s["cycles"]["median"]:>15,}'
+          f'{s["cycles"]["median"] / p["cycles"]["median"]:>8.2f}x')
+    print(f'{"ms at 40 MHz":<24}{p["ms_at_clk"]:>14,.2f}{s["ms_at_clk"]:>15,.2f}')
+    print()
+    for arm in (p, s):
+        print(f'{arm["run_name"]:<14} custom-0 instructions in the image '
+              f'{arm["custom0_instructions_in_elf"]:>3}   '
+              f'output vs golden: {arm["gate"]["board_vs_golden_bytes_differ"]} of 192 bytes '
+              f'differ, max |d| = {arm["gate"]["max_abs_err"]}')
+
+
+def show_model_shapes(asset: str = "moonshine_shape.json") -> None:
+    """A one-shot detector and an autoregressive model, in the terms the compiler sees.
+
+    The contrast the numbers carry: the same compiler, two very different shapes of
+    work per unit of weight read.
+    """
+    path = Path(asset)
+    if not path.exists():
+        path = ASSETS / asset
+    m = json.loads(path.read_text())
+    d, k = m["signdet"], m["moonshine"]
+    print(f'{d["name"]} runs {d["runs"]}.')
+    print(f'  {d["dispatches_per_run"]} dispatches, {d["macs_per_run"]:,} multiply-accumulates,')
+    print(f'  {d["cycles_median"]:,} cycles = {d["ms_at_clock"]:.0f} ms at {m["clock_mhz"]} MHz,')
+    print(f'  {d["weight_bytes"]:,} bytes of weights.')
+    print()
+    print(f'{k["name"]} runs {k["runs"]}.')
+    print(f'  encoder   {k["encoder_dispatches"]:>4} dispatches, every matrix multiply {k["encoder_gemm_rows"]} rows tall')
+    print(f'  prologue  {k["prologue_dispatches"]:>4} dispatches, also {k["encoder_gemm_rows"]} rows tall')
+    print(f'  decoder   {k["decoder_dispatches_later_step"]:>4} dispatches per step, every matrix multiply'
+          f' {k["decoder_gemm_rows"]} row tall')
+    print(f'            {k["decoder_dispatches_first_step"]} at the first step: there is no cache to append to yet')
+    print()
+    print(f'  {k["macs_per_token"]:,} multiply-accumulates per token against'
+          f' {k["weight_bytes_per_token"]:,} weight bytes')
+    print(f'  = {k["mac_per_weight_byte"]} multiply-accumulates per byte of weight read.')
+    print(f'  The encoder does {k["encoder_gemm_rows"]} rows of arithmetic on the same weights;'
+          f' the decoder does one.')
+    print()
+    print(f'  Self-attention reads {k["self_attention_keys_first_step"]} key at the first step and'
+          f' {k["self_attention_keys_last_step"]} at the last.')
+    print(f'  The model stops when it emits end-of-sequence, on average after'
+          f' {k["steps_mean_measured"]:.2f} of the {k["steps_unrolled"]} steps that are compiled in.')
+    per_utt = (k["encoder_dispatches"] + k["prologue_dispatches"]
+               + k["decoder_dispatches_first_step"]
+               + (k["steps_mean_measured"] - 1) * k["decoder_dispatches_later_step"])
+    print()
+    print(f'  About {per_utt:,.0f} dispatches for one utterance, against'
+          f' {d["dispatches_per_run"]} for one frame of the detector.')
 
 
 # --------------------------------------------------------------------------------------

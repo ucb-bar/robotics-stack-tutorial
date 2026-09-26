@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T16:31:39Z",
+  "generated_at": "2026-09-26T16:47:11Z",
   "generated_by": "content_validate.py",
-  "source_commit": "b5e7be6534bc",
-  "note": "Unit 1 camera + Zephyr drivers/overlays, Unit 2 compilation flow, and the final demo section",
+  "source_commit": "970fb69dfbf2",
+  "note": "Named helpers replace the ad-hoc parsing blocks in Units 2 and 3",
   "files": [
     {
       "path": "work/README.md",
@@ -42,16 +42,16 @@
     },
     {
       "path": "work/iiswc_lab.py",
-      "bytes": 28646,
-      "sha256": "4dee0b9128fd54b4e229c0be2d0eb759e91d208a2a1e8a7515e278a4d15b200f"
+      "bytes": 45162,
+      "sha256": "da654e42f227798993995d47da5a6589227a1c7329629eb0304f6abadea31585"
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 101466,
-      "sha256": "2106e40df22fa6d8bac8df86d06d617978439dec10e293ac0ddd4343763aa035",
+      "bytes": 89722,
+      "sha256": "c9a2354a65b8112d3c1dfce6d2c71e75afadc3edf04bae7e80d4ed956ee92e94",
       "cells": 129,
       "nbformat": 4,
-      "source_chars": 72881,
+      "source_chars": 63182,
       "schema_checked": true
     },
     {
@@ -124,8 +124,8 @@
     },
     {
       "path": "work/tools/build_notebook.py",
-      "bytes": 81770,
-      "sha256": "9ab357db0aea6ba0a57b496d86dde9b9eed3e74d27eb76be4250ad7a7659a97b"
+      "bytes": 72056,
+      "sha256": "bded734da5f45303a1b85afaa49f9290b1a892cdfe0269963bcb884c7d6c4a4b"
     }
   ],
   "repo": {

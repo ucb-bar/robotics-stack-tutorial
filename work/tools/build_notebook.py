@@ -474,12 +474,10 @@ md("""### 2.1 Lower the model, and read the IR
 *On the instance, about five seconds.* `scripts/84_signdet_lower.sh` runs the three
 ModelBlaster stages — `extract_graph`, `generate_skeleton`, `generate_kernels` — and
 writes the IR and the generated C under `out/signdet/`.""")
-code('''import json, hashlib, pathlib
+code('''import json
 repo = lab.repo_root()
 r = lab.sh(f"cd {repo} && ./scripts/84_signdet_lower.sh", timeout=900, head=0, tail=14)
-GEN = pathlib.Path(next(l.split()[-1] for l in reversed(r.stdout.splitlines())
-                        if l.strip().startswith("gen ")))
-IR = GEN.parent / "ir"''')
+signdet = lab.Lowering.from_run(r)''')
 md("""Expected, at the end:
 
 """ + fence(
@@ -493,17 +491,7 @@ md("""Expected, at the end:
 The first stage parsed the PyTorch module into `ir/graph.json`. That file is the whole
 network: the tensors with their shapes and quantisation scales, the operators with their
 shapes, and the order they run in.""")
-code('''g = json.load(open(IR / "graph.json"))
-print(f'{g["name"]}  {g["quant"]}  {len(g["ops"])} operators, '
-      f'{len(g["dispatches"])} of them dispatched to a kernel')
-print(f'input  {g["input"]["tensor"]:<8} {g["tensors"][g["input"]["tensor"]]["shape"]}')
-print(f'output {g["output"]["tensor"]:<8} {g["tensors"][g["output"]["tensor"]]["shape"]}')
-print()
-for n in g["ops"]:
-    shape = " ".join(f"{k}={v}" for k, v in n.get("shape", {}).items())
-    print(f'  {n["name"]:<9} {n["op"]:<14} {n["inputs"][0]:>8} -> {n["outputs"][0]:<9} {shape}')
-print()
-print("graph.json md5", hashlib.md5((IR / "graph.json").read_bytes()).hexdigest())''')
+code('''lab.show_graph(signdet)''')
 md("""Expected:
 
 """ + fence(
@@ -537,16 +525,7 @@ md("""### 2.2 See which kernel each operator got
 curated for this target and writes what it chose to `kernel_picks.json`. That file is the
 compilation decision: the operator, where the kernel came from, which algorithm, and the
 file that will be compiled in.""")
-code('''picks = json.load(open(GEN / "kernel_picks.json"))["picks"]
-for op in sorted(picks):
-    n = sum(1 for o in g["ops"] if o["op"] == op)
-    print(f'{op:<14} {picks[op]["source"]:<18} {picks[op]["algorithm"]}')
-    print(f'{"":<14} serves {n} of the {len(g["ops"])} operators')
-    print(f'{"":<14} {picks[op]["path"]}')
-mac = sum(o["shape"]["OH"] * o["shape"]["OW"] * o["shape"]["OC"] * o["shape"]["IC"]
-          * o["shape"]["KH"] * o["shape"]["KW"]
-          for o in g["ops"] if o["op"] == "conv2d_s8_pc")
-print(f'\\nconv2d_s8_pc carries {mac:,} multiply-accumulates -- every one in the graph.')''')
+code('''lab.show_kernel_choices(signdet)''')
 md("""Expected:
 
 """ + fence(
@@ -571,10 +550,8 @@ to match, and reduces them eight bytes at a time with the SoC's `MBP.DOT8` instr
 
 This is the loop it reduces in. Four output channels are accumulated at once against one
 gathered patch, so the patch is loaded once and used four times:""")
-code('''src = pathlib.Path(picks["conv2d_s8_pc"]["path"]).read_text().splitlines()
-first = next(i for i, l in enumerate(src) if "for (b = 0; b < quads" in l)
-for i, line in enumerate(src[first:first + 17], start=first + 1):
-    print(f"{i:>4}  {line}")''')
+code('''lab.show_source(signdet.picks["conv2d_s8_pc"]["path"],
+                around="for (b = 0; b < quads", lines=17)''')
 md("""Expected:
 
 """ + fence(
@@ -598,11 +575,8 @@ md("""Expected:
 
 `mb_pext_dot8` is one instruction. No assembler knows the encoding, so it is written out
 with GAS's `.insn` directive:""")
-code('''pext_h = lab.repo_file("fpga/pynq-z2/sw/pext.h")
-lines = pext_h.read_text().splitlines()
-first = next(i for i, l in enumerate(lines) if "mb_pext_dot8(" in l) - 2
-for i, line in enumerate(lines[first:first + 8], start=first + 1):
-    print(f"{i:>4}  {line}")''')
+code('''lab.show_source(lab.repo_file("fpga/pynq-z2/sw/pext.h"),
+                around="mb_pext_dot8(", before=2, lines=8)''')
 md("""Expected:
 
 """ + fence(
@@ -627,27 +601,7 @@ and every weight becomes an int8 and a scale. Activation scales are per tensor a
 the IR; weight scales are per output channel and are folded into a fixed-point multiply
 the kernel applies to each accumulator. That multiply is the compiled form of the float
 arithmetic, and it is in `weights.c` as two int32 arrays per convolution:""")
-code('''import re
-w = (GEN / "weights.c").read_text().splitlines()
-arrays, total, values, i = [], 0, 0, 0
-while i < len(w):
-    m = re.search(r"(\\w+_output_(?:multiplier|shift)_per_oc_\\w+)\\[(\\d+)\\]", w[i])
-    if m:
-        j = i
-        while "};" not in w[j]:
-            j += 1
-        arrays.append((m.group(1), int(m.group(2)), i + 1, j + 1))
-        total += j - i + 1
-        values += int(m.group(2))
-        i = j + 1
-    else:
-        i += 1
-print(f"weights.c is {len(w):,} lines. {total} of them are the requantise grid: "
-      f"{len(arrays)} arrays, {values} int32 values.\\n")
-for name, n, a, b in arrays:
-    print(f"  line {a:>5}  {name:<52} [{n}]")
-print()
-print("\\n".join(w[arrays[0][2] - 1:arrays[1][3]]))''')
+code('''lab.show_requant_arrays(signdet)''')
 md("""Expected, ending in `conv1`'s two arrays:
 
 """ + fence(
@@ -671,22 +625,7 @@ Those two numbers per channel are the float multiply. The convolution accumulate
 int32, and the kernel then computes `(acc * multiplier + 2^30) >> 31 >> shift`, which is
 the fixed-point form of multiplying by the real number *M* = input scale × weight scale ÷
 output scale. Reversing it recovers the scale the quantiser picked for each channel:""")
-code('''import numpy as np
-z = np.load(IR / "weights.npz")
-mult, shift = z["conv1.output_multiplier_per_oc"], z["conv1.output_shift_per_oc"]
-s_in = g["tensors"]["x"]["quant"]["scale"]
-s_out = g["tensors"]["relu"]["quant"]["scale"]
-print(f"conv1   input scale {s_in:.12f} (= 1/{1/s_in:.0f})   "
-      f"output scale {s_out:.12f}\\n")
-print("  oc   multiplier  shift          M   implied weight scale   max |W| that fits")
-for oc in range(4):
-    M = float(mult[oc]) / 2**31 / 2**int(shift[oc])
-    s_w = M * s_out / s_in
-    print(f"  {oc:>2}   {mult[oc]:>10}  {shift[oc]:>5}   {M:.8f}         {s_w:.8f}   "
-          f"{s_w * 127:.6f}")
-print(f"\\n  ... and 12 more channels. Every channel saturates at "
-      f"{int(np.abs(z['conv1.weight_q']).max())}, which is what per-channel means: the "
-      f"multiplier absorbs the range, not the weights.")''')
+code('''lab.show_requant_channels(signdet)''')
 md("""Expected:
 
 """ + fence(
@@ -712,18 +651,7 @@ of calibration frames moves. `scripts/84` calibrates on 64 frames; lower the sam
 checkpoint again on 256 and compare:""")
 code('''r256 = lab.sh(f"cd {repo} && ./scripts/84_signdet_lower.sh --name signdet_cal256 --ncal 256",
               timeout=900, quiet=True)
-GEN256 = pathlib.Path(next(l.split()[-1] for l in reversed(r256.stdout.splitlines())
-                           if l.strip().startswith("gen ")))
-IR256 = GEN256.parent / "ir"
-print("graph.json md5   64 frames", hashlib.md5((IR / "graph.json").read_bytes()).hexdigest())
-print("                256 frames", hashlib.md5((IR256 / "graph.json").read_bytes()).hexdigest())
-a, b = np.load(IR / "weights.npz"), np.load(IR256 / "weights.npz")
-print(f"\\n{'array':<34}{'entries':>9}{'differ':>9}")
-for k in a.files:
-    if "output_" in k:
-        print(f"{k:<34}{a[k].size:>9}{int((a[k] != b[k]).sum()):>9}")
-print("\\nweight_q arrays identical:",
-      all((a[k] == b[k]).all() for k in a.files if k.endswith("weight_q")))''')
+lab.compare_calibration(signdet, lab.Lowering.from_run(r256))''')
 md("""Expected:
 
 """ + fence(
@@ -759,20 +687,8 @@ whichever the target has. `--scalar` lowers the arm with no accelerator kernels 
 so every operator falls to ModelBlaster's own reference C.""")
 code('''rs = lab.sh(f"cd {repo} && ./scripts/84_signdet_lower.sh --name signdet_scalar --scalar",
             timeout=900, head=0, tail=8)
-GENS = pathlib.Path(next(l.split()[-1] for l in reversed(rs.stdout.splitlines())
-                         if l.strip().startswith("gen ")))
-scalar = json.load(open(GENS / "kernel_picks.json"))["picks"]
-print()
-for op in sorted(picks):
-    print(f'{op:<14} pext    {picks[op]["source"]:<18} {picks[op]["algorithm"]}')
-    print(f'{"":<14} scalar  {scalar[op]["source"]:<18} {scalar[op]["algorithm"]}')
-print()
-for f in ("ir/graph.json", "gen/weights.c", "gen/kernels.c"):
-    x = hashlib.md5((GEN.parent / f).read_bytes()).hexdigest()
-    y = hashlib.md5((GENS.parent / f).read_bytes()).hexdigest()
-    print(f'{f:<16} {"same" if x == y else "differs"}   {x}  {y}')
-print(f'\\nkernels.c   {len(open(GEN / "kernels.c").read().splitlines()):>5} lines on pext, '
-      f'{len(open(GENS / "kernels.c").read().splitlines()):>4} on scalar')''')
+scalar = lab.Lowering.from_run(rs)
+lab.compare_backends(signdet, scalar)''')
 md("""Expected:
 
 """ + fence(
@@ -792,10 +708,7 @@ md("""Expected:
 Same graph, same weights, same requantise grid — 1,382 lines of kernel against 119. This
 is the convolution the scalar arm bound, the six nested loops any C implementation would
 write:""")
-code('''ref = (GENS / "kernels.c").read_text().splitlines()
-first = next(i for i, l in enumerate(ref) if "acc +=" in l) - 11
-for i, line in enumerate(ref[first:first + 16], start=first + 1):
-    print(f"{i:>4}  {line}")''')
+code('''lab.show_source(scalar.gen / "kernels.c", around="acc +=", before=11, lines=16)''')
 md("""Expected:
 
 """ + fence(
@@ -834,11 +747,7 @@ illegal-instruction trap is part of the pass.
 Both runs are shipped beside this notebook in `assets/signdet_board_cycles.json`, 12 KB.
 This is the console the accelerated image returned, with one line held back:""")
 code('''board = json.load(open("assets/signdet_board_cycles.json"))
-print(f'{board["script"]}, {board["measured"]} on {board["measured_on"]},')
-print(f'bitstream {board["soc_magic"]} at {board["clk_hz"] // 10**6} MHz, '
-      f'median of {board["iters"]} inferences.\\n')
-for line in board["arms"]["pext"]["console"]:
-    print(line[:200] + " ..." if len(line) > 200 else line)''')
+lab.show_board_provenance(board)''')
 md("""Expected, in part:
 
 """ + fence(
@@ -863,20 +772,7 @@ md("""Expected, in part:
 `median` is the frame, taken over eleven inferences after a warm-up, so it is
 steady-state and not a first-call number. The per-dispatch rows come from the same run.
 Both arms, side by side:""")
-code('''p, s = board["arms"]["pext"], board["arms"]["scalar"]
-print(f'{"":<9}{"":<15}{"MBP kernels":>14}{"reference C":>15}{"factor":>9}')
-for a, b in zip(p["ops"], s["ops"]):
-    print(f'{a["name"]:<9}{a["op"]:<15}{a["cycles"]:>14,}{b["cycles"]:>15,}'
-          f'{b["cycles"] / a["cycles"]:>8.2f}x')
-print(f'{"frame":<24}{p["cycles"]["median"]:>14,}{s["cycles"]["median"]:>15,}'
-      f'{s["cycles"]["median"] / p["cycles"]["median"]:>8.2f}x')
-print(f'{"ms at 40 MHz":<24}{p["ms_at_clk"]:>14,.2f}{s["ms_at_clk"]:>15,.2f}')
-print()
-for arm in (p, s):
-    print(f'{arm["run_name"]:<14} custom-0 instructions in the image '
-          f'{arm["custom0_instructions_in_elf"]:>3}   '
-          f'output vs golden: {arm["gate"]["board_vs_golden_bytes_differ"]} of 192 bytes '
-          f'differ, max |d| = {arm["gate"]["max_abs_err"]}')''')
+code('''lab.show_board_arms(board)''')
 md("""Expected:
 
 """ + fence(
@@ -939,40 +835,7 @@ The decoder also gets more expensive as it goes. Each step attends over every to
 so far, so the last step reads 24 keys where the first read one. The lowering unrolls all 24
 steps into straight-line code and grows the key and value cache with an ordinary
 concatenate, so a later step costs a little more than an earlier one.""")
-code('''import json
-
-m = json.load(open("assets/moonshine_shape.json"))
-d, k = m["signdet"], m["moonshine"]
-
-print(f'{d["name"]} runs {d["runs"]}.')
-print(f'  {d["dispatches_per_run"]} dispatches, {d["macs_per_run"]:,} multiply-accumulates,')
-print(f'  {d["cycles_median"]:,} cycles = {d["ms_at_clock"]:.0f} ms at {m["clock_mhz"]} MHz,')
-print(f'  {d["weight_bytes"]:,} bytes of weights.')
-print()
-print(f'{k["name"]} runs {k["runs"]}.')
-print(f'  encoder   {k["encoder_dispatches"]:>4} dispatches, every matrix multiply {k["encoder_gemm_rows"]} rows tall')
-print(f'  prologue  {k["prologue_dispatches"]:>4} dispatches, also {k["encoder_gemm_rows"]} rows tall')
-print(f'  decoder   {k["decoder_dispatches_later_step"]:>4} dispatches per step, every matrix multiply'
-      f' {k["decoder_gemm_rows"]} row tall')
-print(f'            {k["decoder_dispatches_first_step"]} at the first step: there is no cache to append to yet')
-print()
-print(f'  {k["macs_per_token"]:,} multiply-accumulates per token against'
-      f' {k["weight_bytes_per_token"]:,} weight bytes')
-print(f'  = {k["mac_per_weight_byte"]} multiply-accumulates per byte of weight read.')
-print(f'  The encoder does {k["encoder_gemm_rows"]} rows of arithmetic on the same weights;'
-      f' the decoder does one.')
-print()
-print(f'  Self-attention reads {k["self_attention_keys_first_step"]} key at the first step and'
-      f' {k["self_attention_keys_last_step"]} at the last.')
-print(f'  The model stops when it emits end-of-sequence, on average after'
-      f' {k["steps_mean_measured"]:.2f} of the {k["steps_unrolled"]} steps that are compiled in.')
-
-per_utt = (k["encoder_dispatches"] + k["prologue_dispatches"]
-           + k["decoder_dispatches_first_step"]
-           + (k["steps_mean_measured"] - 1) * k["decoder_dispatches_later_step"])
-print()
-print(f'  About {per_utt:,.0f} dispatches for one utterance, against'
-      f' {d["dispatches_per_run"]} for one frame of the detector.')''')
+code('''lab.show_model_shapes()''')
 md("Expected:\n\n" + fence(
     "SignDetLite runs once per camera frame.\n"
     "  8 dispatches, 7,532,544 multiply-accumulates,\n"
@@ -1247,50 +1110,7 @@ md("""### Optional: open the trace inside this page
 over `postMessage`, so the file never leaves your instance and you never download it. The
 viewer asks once whether it should trust this page with the file — answer **Yes** and the
 timeline appears in the frame.""")
-code('''import os
-from pathlib import Path
-from IPython.display import HTML, display
-
-# The path is relative to the root this instance's Jupyter is serving, because that is what
-# /files/ resolves against.
-home = Path.home()
-root = next((r for r in (home / "work", home) if r in t.parents), home)
-url = "/files/" + os.path.relpath(t, root)
-print("fetching", url)
-
-# NO BACKSLASH BELOW, ON PURPOSE.  The HTML is an ordinary Python string, so a JS
-# "join('\\n')" written here would become a literal newline inside a JS string literal --
-# a syntax error, and the symptom is a script that silently never runs.
-display(HTML("""
-<div id="pflog" style="font:12px/1.5 monospace;white-space:pre;border:1px solid #888;padding:6px">loading ...</div>
-<iframe id="pfui" src="https://ui.perfetto.dev/#!/"
-        style="width:100%;height:520px;border:1px solid #888;margin-top:6px"></iframe>
-<script>
-(function () {
-  var NL = String.fromCharCode(10), lines = [];
-  var log = document.getElementById('pflog');
-  function say(s) { lines.push(s); log.textContent = lines.join(NL); }
-  var f = document.getElementById('pfui'), buf = null, sent = false, tries = 0, timer = null;
-  f.addEventListener('load', function () { say('viewer loaded'); });
-  fetch('""" + url + """', {credentials: 'same-origin'})
-    .then(function (r) { say('fetch -> HTTP ' + r.status); return r.arrayBuffer(); })
-    .then(function (b) { buf = b; say('trace in the page: ' + b.byteLength + ' bytes'); })
-    .catch(function (e) { say('fetch failed: ' + e); });
-  window.addEventListener('message', function (e) {
-    if (e.data !== 'PONG' || sent || !buf) { return; }
-    clearInterval(timer); sent = true;
-    f.contentWindow.postMessage({perfetto: {buffer: buf, title: 'Rocket SoC'}},
-                                'https://ui.perfetto.dev');
-    say('handed to the viewer -- answer Yes in the frame below');
-  });
-  timer = setInterval(function () {
-    tries++;
-    f.contentWindow.postMessage('PING', 'https://ui.perfetto.dev');
-    if (tries > 60) { clearInterval(timer); say('the viewer did not answer'); }
-  }, 500);
-})();
-</script>
-"""))''')
+code('''lab.show_perfetto(t)''')
 md("""Expected, in the box above the frame:
 
 """ + fence(
