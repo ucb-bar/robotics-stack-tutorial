@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-26T09:31:24Z",
+  "generated_at": "2026-09-26T15:11:49Z",
   "generated_by": "content_validate.py",
-  "source_commit": "27f8df1e7884",
-  "note": "unit 1 sources are public; pin advances to 5bb524cf",
+  "source_commit": "3516d3874e7c",
+  "note": "unit 0 trimmed, descriptive names, unit 2 compilation walkthrough",
   "files": [
     {
       "path": "work/README.md",
@@ -11,14 +11,14 @@
       "sha256": "3cb47eda361b47f014ee7b6e47aea4dcc3cb43c1799871306e59cd376ec6fee1"
     },
     {
-      "path": "work/assets/b156_lanes.json",
-      "bytes": 9098,
-      "sha256": "e7c61c7334b5aaed67d5b15848fb56c257f81507c17a0a4db958e12ab9a93523"
-    },
-    {
-      "path": "work/assets/b76_gate.expected.txt",
+      "path": "work/assets/kernel_gate.expected.txt",
       "bytes": 1213,
       "sha256": "2354b40e559c7d6d3dbda41b560914518033ce0f282c817b98935f60dec4e554"
+    },
+    {
+      "path": "work/assets/lane_timeline.json",
+      "bytes": 9098,
+      "sha256": "e7c61c7334b5aaed67d5b15848fb56c257f81507c17a0a4db958e12ab9a93523"
     },
     {
       "path": "work/assets/rocket_tacit_trace.meta.json",
@@ -31,17 +31,22 @@
       "sha256": "34fabc700067b39c8ebb357c85642d6c4c976ae0b26dd1ca71f84634fdc815f3"
     },
     {
+      "path": "work/assets/signdet_board_cycles.json",
+      "bytes": 12470,
+      "sha256": "b2cdb70a4c49a81c63d8e88229fac5ddde07b35a4fcfabefca76b19677fb9c79"
+    },
+    {
       "path": "work/iiswc_lab.py",
-      "bytes": 25478,
-      "sha256": "262e5c4110b37ed4abf072b5e5c730cb8d66dffcccb743748cdd443f53d0264c"
+      "bytes": 28646,
+      "sha256": "4dee0b9128fd54b4e229c0be2d0eb759e91d208a2a1e8a7515e278a4d15b200f"
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 36882,
-      "sha256": "64d7ce2b21ac11bbf5c4357c2876790fc8936e895ce15b009732065eb1ee4821",
-      "cells": 69,
+      "bytes": 61745,
+      "sha256": "77b218bae37e68249b6991499b927a64db7c90e9c75d57b6a3615c3c8a7c71da",
+      "cells": 88,
       "nbformat": 4,
-      "source_chars": 23735,
+      "source_chars": 42985,
       "schema_checked": true
     },
     {
@@ -113,14 +118,9 @@
       "sha256": "a0de44395520545afb31771efbbe83d6853df5807fdbeab83b4d702667babc02"
     },
     {
-      "path": "work/rocket_tacit_trace.perfetto.json",
-      "bytes": 1989396,
-      "sha256": "a9a454746d51f78c5e412f4f8f83b8fbac97f2dccbfb83a2304bba01962bc16c"
-    },
-    {
       "path": "work/tools/build_notebook.py",
-      "bytes": 29674,
-      "sha256": "99dc3e2566c5480a25903d4b162511faf4b081402a2e0487343ee1a668bbe58e"
+      "bytes": 50426,
+      "sha256": "faac28564cad22572b414221b378117090f0d8f7652ac28245ccfca6c9a776bf"
     }
   ],
   "repo": {

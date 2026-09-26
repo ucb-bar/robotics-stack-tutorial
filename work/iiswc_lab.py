@@ -35,9 +35,6 @@ from pathlib import Path
 # Two copies of a protocol constant is one copy too many.
 # --------------------------------------------------------------------------------------
 
-# Measured room aggregate, B170 / L412: ten radios deliver what one radio delivers.
-ROOM_MIB_PER_S = 4.021
-ROOM_SEATS = 30
 
 
 # --------------------------------------------------------------------------------------
@@ -183,7 +180,7 @@ class BoardResult:
         return f"[{head}] {self.cmd}\n{self.note}\n{body}".strip()
 
 
-#: Where B176's instance-side client may have landed. It is the other end of
+#: Where the instance-side client may have landed. It is the other end of
 #: `/opt/iiswc/host/tunnel_agent.sh` and the two are one protocol.
 _BOARD_LINK_PATHS = (
     os.environ.get("IISWC_BOARD_LINK", ""),
@@ -198,7 +195,7 @@ _BOARD_LINK_PATHS = (
 def _board_link():
     """THE transport, and the only place that knows how a board is reached.
 
-    Returns B176's `BoardLink` instance, or None when `board_link.py` is not on this
+    Returns the `BoardLink` instance, or None when `board_link.py` is not on this
     instance yet. Everything else in this module goes through it, so moving to a
     different transport is an edit here and nowhere else.
     """
@@ -250,7 +247,7 @@ def board(*words: str, timeout: float | None = None, stdin: bytes = b"",
     The card does not take arbitrary commands: its key carries a forced command that
     accepts a fixed verb set -- `ping`, `status`, `help`, `ls`, `put`, `get`,
     `bitstream`, `run`, `camera`, `mic` -- so that a compromised instance cannot obtain
-    a shell on the board (B176). `lab.board("status")` is the whole interface.
+    a shell on the board. `lab.board("status")` is the whole interface.
     """
     cmd = " ".join(words)
     link = _board_link()
@@ -279,7 +276,7 @@ def board(*words: str, timeout: float | None = None, stdin: bytes = b"",
 def board_put(path: str | Path, name: str | None = None, verbose: bool = True) -> BoardResult:
     """Push one file to the card's incoming directory, length and md5 declared.
 
-    Check what it costs the room first -- `lab.budget()` -- because every byte crosses
+     -- because every byte crosses
     the one shared 2.4 GHz channel that ten boards already saturate.
     """
     path = Path(path)
@@ -304,16 +301,7 @@ def board_put(path: str | Path, name: str | None = None, verbose: bool = True) -
 
 
 # --------------------------------------------------------------------------------------
-# The room's airtime budget -- B170 / L412
 # --------------------------------------------------------------------------------------
-def room_seconds(nbytes: int, seats: int = ROOM_SEATS) -> float:
-    """How long `nbytes` per seat occupies the room's ONE shared 2.4 GHz channel."""
-    return (nbytes * seats) / (ROOM_MIB_PER_S * 1024 * 1024)
-
-
-def budget(label: str, nbytes: int, seats: int = ROOM_SEATS) -> None:
-    s = room_seconds(nbytes, seats)
-    print(f"{label:<34} {nbytes:>12,} B/seat   {seats} seats -> {s:7.1f} s of room airtime")
 
 
 # --------------------------------------------------------------------------------------
@@ -447,8 +435,8 @@ def _axes_style(ax):
     ax.set_axisbelow(True)
 
 
-def b157_figure(golden: dict):
-    """The B157 result, drawn from the committed golden -- no solve, no artifacts.
+def schedule_comparison_figure(golden: dict):
+    """The schedule result, drawn from the committed golden -- no solve, no artifacts.
 
     Two panels on ONE shared millisecond axis:
       * what the compaction post-pass moves on the two CP-SAT arms;
@@ -532,8 +520,8 @@ def b157_figure(golden: dict):
     return fig
 
 
-def b156_figure(lanes: dict):
-    """B156's two harts, drawn from the measured lane table (`assets/b156_lanes.json`).
+def lane_timeline_figure(lanes: dict):
+    """The two harts, drawn from the measured lane table (`assets/lane_timeline.json`).
 
     `model_pct_per_bucket` is gate A's series: the fraction of each bucket with an
     `mb_pext_conv` frame on the stack.  One wall clock bounds both lanes, so what the
@@ -570,5 +558,76 @@ def b156_figure(lanes: dict):
     ax.legend(frameon=False, fontsize=8, loc="lower center", ncols=1)
     _axes_style(ax)
     ax.grid(axis="y", color=GRID, lw=0.6, zorder=0)
+    fig.tight_layout()
+    return fig
+
+
+def kernel_speedup_figure(board: dict):
+    """SignDetLite's frame, measured on silicon on both backends.
+
+    Drawn from `assets/signdet_board_cycles.json`, which is two `scripts/86_signdet_board.sh`
+    records: the same graph and the same weights with the curated MBP kernels bound, and
+    again with ModelBlaster's reference C bound.
+
+    Two panels, because the two questions have different units. The top one is the frame,
+    to scale, and the pext bar is a seventeenth of the scalar one. The bottom one is each
+    dispatch's share of its own frame, which is the only way to compare a 2,117-cycle
+    permute with a 50,937,793-cycle convolution in the same picture.
+    """
+    import matplotlib.pyplot as plt
+
+    pext, scal = board["arms"]["pext"], board["arms"]["scalar"]
+    names = [o["name"] for o in pext["ops"]]
+    fig, (a, b) = plt.subplots(2, 1, figsize=(9.6, 6.4),
+                               gridspec_kw={"height_ratios": [0.62, 1.0]})
+
+    # -- panel A: the whole frame, to scale -------------------------------------------
+    for i, (arm, colour) in enumerate(((scal, S2), (pext, S1))):
+        ms = arm["ms_at_clk"]
+        a.barh(i, ms, height=0.5, color=colour, zorder=3)
+        a.annotate(f"{ms:,.2f} ms   {arm['cycles']['median']:,} cycles   "
+                   f"{arm['cyc_per_mac']:.4f} cycles/MAC",
+                   (ms, i), textcoords="offset points", xytext=(8, 0),
+                   va="center", fontsize=8.5, color=INK)
+    factor = scal["cycles"]["median"] / pext["cycles"]["median"]
+    a.annotate(f"{factor:.2f}x", (scal["ms_at_clk"] * 0.42, 0.5),
+               ha="center", va="center", fontsize=13, color=INK, weight="bold")
+    a.set_yticks([0, 1])
+    a.set_yticklabels(["reference C", "curated MBP\nkernels"], fontsize=8.5)
+    a.set_ylim(-0.6, 1.6)
+    a.set_xlim(0, scal["ms_at_clk"] * 1.75)
+    a.set_xlabel(f"milliseconds for one 64x64 frame at {board['clk_hz'] / 1e6:.0f} MHz, "
+                 f"median of {board['iters']}", fontsize=8.5, color=INK2)
+    a.set_title("End to end, and both arms returned byte-identical output",
+                fontsize=10, color=INK, loc="left", pad=8)
+    _axes_style(a)
+
+    # -- panel B: each dispatch's share of its own frame -------------------------------
+    ys = list(range(len(names)))[::-1]
+    h = 0.36
+    for arm, colour, label, off in ((pext, S1, "curated MBP kernels", +h / 2),
+                                    (scal, S2, "reference C", -h / 2)):
+        b.barh([y + off for y in ys], [o["pct"] for o in arm["ops"]], height=h,
+               color=colour, zorder=3, label=label)
+    for y, p, s in zip(ys, pext["ops"], scal["ops"]):
+        b.annotate(f"{s['cycles'] / p['cycles']:.2f}x", (36.5, y), ha="right",
+                   va="center", fontsize=8, color=INK)
+        b.annotate(f"{p['cycles']:>11,}   {s['cycles']:>12,}", (38.5, y), ha="left",
+                   va="center", fontsize=7.5, color=INK2, family="monospace")
+    b.annotate("factor", (36.5, len(names) - 0.4), ha="right", va="center",
+               fontsize=7.5, color=INK2)
+    b.annotate("  MBP cycles    reference C", (38.5, len(names) - 0.4), ha="left",
+               va="center", fontsize=7.5, color=INK2, family="monospace")
+    b.set_yticks(ys)
+    b.set_yticklabels([f"{o['name']}  ({o['op']})" for o in pext["ops"]], fontsize=8.5)
+    b.set_xlim(0, 62)
+    b.set_xticks([0, 10, 20, 30])
+    b.set_ylim(-0.7, len(names) - 0.1)
+    b.set_xlabel("% of that arm's own frame", fontsize=8.5, color=INK2)
+    b.set_title("By layer, as a share of each arm's own frame",
+                fontsize=10, color=INK, loc="left", pad=18)
+    b.legend(frameon=False, fontsize=8, loc="upper left",
+             bbox_to_anchor=(0.0, 1.10), ncols=2)
+    _axes_style(b)
     fig.tight_layout()
     return fig

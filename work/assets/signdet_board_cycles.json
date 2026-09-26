@@ -1,0 +1,330 @@
+{
+ "lab": "B189",
+ "what": "SignDetLite through ModelBlaster, measured on silicon twice: once with the curated MBP kernels bound, once with ModelBlaster's reference C bound. Same graph, same weights, same baked input frame, same bitstream.",
+ "measured": "2026-09-26",
+ "measured_on": "the bench PYNQ-Z1 on garden",
+ "script": "scripts/86_signdet_board.sh (--scalar for the second arm)",
+ "lowered_by": "scripts/84_signdet_lower.sh --ncal 64 (--scalar for the second arm)",
+ "weights": "the GTSDB-trained checkpoint. Random weights lower to the same graph, the same three picks and the same 7,532,544 MAC; only detection accuracy differs.",
+ "soc_magic": "0x5A5A0038",
+ "bitstream_md5": "ced0aab0c7b52f25338eeffe8f678e4f",
+ "clk_hz": 40000000,
+ "iters": 11,
+ "mac_total": 7532544,
+ "arms": {
+  "pext": {
+   "run_name": "b189_pext",
+   "kernels": {
+    "conv2d_s8_pc": "pext_patch_dot8_pc",
+    "permute4_s8": "pext_block",
+    "softmax_s8": "pext_int_memo2"
+   },
+   "picks_source": {
+    "conv2d_s8_pc": "curated[pext]",
+    "permute4_s8": "curated[pext_nl]",
+    "softmax_s8": "curated[pext_nl]"
+   },
+   "custom0_instructions_in_elf": 49,
+   "image_bytes": 149004,
+   "cycles": {
+    "median": 9508851,
+    "min": 9504987,
+    "max": 9514870,
+    "warm_first": 9519734,
+    "row_sum": 9503239,
+    "row_sum_minus_median": -5612
+   },
+   "ms_at_clk": 237.72127500000002,
+   "cyc_per_mac": 1.2623691278803018,
+   "ops": [
+    {
+     "id": 0,
+     "name": "conv1",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=3;IH=64;IW=64;OC=16;OH=32;OW=32;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1",
+     "cycles": 998077,
+     "mac": 442368,
+     "cyc_per_mac": 2.256214283130787,
+     "pct": 10.49629445240019
+    },
+    {
+     "id": 1,
+     "name": "conv2",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=16;IH=32;IW=32;OC=32;OH=16;OW=16;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1",
+     "cycles": 1197067,
+     "mac": 1179648,
+     "cyc_per_mac": 1.0147662692599826,
+     "pct": 12.588976312700662
+    },
+    {
+     "id": 2,
+     "name": "conv3",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=32;IH=16;IW=16;OC=32;OH=16;OW=16;KH=3;KW=3;SH=1;SW=1;PH=1;PW=1",
+     "cycles": 2764055,
+     "mac": 2359296,
+     "cyc_per_mac": 1.1715592278374567,
+     "pct": 29.06823337540992
+    },
+    {
+     "id": 3,
+     "name": "conv4",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=32;IH=16;IW=16;OC=64;OH=8;OW=8;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1",
+     "cycles": 1322570,
+     "mac": 1179648,
+     "cyc_per_mac": 1.121156480577257,
+     "pct": 13.908830835607793
+    },
+    {
+     "id": 4,
+     "name": "conv5",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=64;IH=8;IW=8;OC=64;OH=8;OW=8;KH=3;KW=3;SH=1;SW=1;PH=1;PW=1",
+     "cycles": 3080706,
+     "mac": 2359296,
+     "cyc_per_mac": 1.305773417154948,
+     "pct": 32.398299226688906
+    },
+    {
+     "id": 5,
+     "name": "head",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=64;IH=8;IW=8;OC=3;OH=8;OW=8;KH=1;KW=1;SH=1;SW=1;PH=0;PW=0",
+     "cycles": 86788,
+     "mac": 12288,
+     "cyc_per_mac": 7.062825520833333,
+     "pct": 0.9127075395334305
+    },
+    {
+     "id": 6,
+     "name": "permute",
+     "op": "permute4_s8",
+     "shape": "d0=1;d1=3;d2=8;d3=8;p0=0;p1=2;p2=3;p3=1",
+     "cycles": 2117,
+     "mac": 0,
+     "cyc_per_mac": null,
+     "pct": 0.02226346800470425
+    },
+    {
+     "id": 7,
+     "name": "softmax",
+     "op": "softmax_s8",
+     "shape": "M=64;K=3",
+     "cycles": 51859,
+     "mac": 0,
+     "cyc_per_mac": null,
+     "pct": 0.5453760922323844
+    }
+   ],
+   "gate": {
+    "board_vs_golden_bytes_differ": 0,
+    "max_abs_err": 0,
+    "pass": true
+   },
+   "ir_graph_md5": "70a0ac6d37a0bf99a6733f40e5e64073",
+   "gen_kernels_c_md5": "19d585027f49cc808b2b0339e2dfaf24",
+   "gen_weights_c_md5": "e706082b34c472af1e9ad072eb5b88b4",
+   "kernel_picks_digest": "a949c0a11fc4830e5f55ae4f6cef0335",
+   "console": [
+    "*** Booting Zephyr OS build 4329bf61c4fe ***",
+    "",
+    "MB_PEXT_BUILD model=signdet_b144 quant=int8 ops=8 iters=11 hw=1",
+    "MB_PEXT_BUILD main_cpu=0 main_hartid=0 cpus=2",
+    "MB_PEXT_RUN cpu=0 mhartid=0 median=9508851 min=9504987 max=9514870 warm=9519734 mtime=9505 max_abs_err=0",
+    "MB_PEXT_OP id=0 name=conv1 op=conv2d_s8_pc shape=N=1;IC=3;IH=64;IW=64;OC=16;OH=32;OW=32;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1 cycles=998077",
+    "MB_PEXT_OP id=1 name=conv2 op=conv2d_s8_pc shape=N=1;IC=16;IH=32;IW=32;OC=32;OH=16;OW=16;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1 cycles=1197067",
+    "MB_PEXT_OP id=2 name=conv3 op=conv2d_s8_pc shape=N=1;IC=32;IH=16;IW=16;OC=32;OH=16;OW=16;KH=3;KW=3;SH=1;SW=1;PH=1;PW=1 cycles=2764055",
+    "MB_PEXT_OP id=3 name=conv4 op=conv2d_s8_pc shape=N=1;IC=32;IH=16;IW=16;OC=64;OH=8;OW=8;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1 cycles=1322570",
+    "MB_PEXT_OP id=4 name=conv5 op=conv2d_s8_pc shape=N=1;IC=64;IH=8;IW=8;OC=64;OH=8;OW=8;KH=3;KW=3;SH=1;SW=1;PH=1;PW=1 cycles=3080706",
+    "MB_PEXT_OP id=5 name=head op=conv2d_s8_pc shape=N=1;IC=64;IH=8;IW=8;OC=3;OH=8;OW=8;KH=1;KW=1;SH=1;SW=1;PH=0;PW=0 cycles=86788",
+    "MB_PEXT_OP id=6 name=permute op=permute4_s8 shape=d0=1;d1=3;d2=8;d3=8;p0=0;p1=2;p2=3;p3=1 cycles=2117",
+    "MB_PEXT_OP id=7 name=softmax op=softmax_s8 shape=M=64;K=3 cycles=51859",
+    "MB_SMX2 rows=768 elements=2304 zero_by_cutoff=1524 exact_evals=780 d0_hist=37:12,38:756,",
+    "MB_PEXT_OUT <192 bytes, elided: the trained model's output on one frame is not published -- docs/SIGNDET_WEIGHTS.md>",
+    "   hart 0 (big): median 237.721 ms   max_abs_err=0",
+    "MB_PEXT_NEG starting -- one MBP.DOT8 pinned to CPU 1; an illegal-instruction trap here is the PASS",
+    "",
+    " mcause: 2, Illegal instruction",
+    "  mtval: d7070b",
+    "     a0: 0000000000000000    t0: bc9474a11cd6fc1f",
+    "     a1: 0000000000000000    t1: 00000000800092b6",
+    "     a2: 0000000000000000    t2: 887609f01e1c8097",
+    "     a3: 0101010101010101    t3: 1f1017927ea5b0b8",
+    "     a4: 0102030405060708    t4: 9e6b13de49735bb7",
+    "     a5: 0000000080024768    t5: d57ed682b5b36b64",
+    "     a6: e7338fa4078aca52    t6: 8cf2a5fd1a07693e",
+    "     a7: 0ff2ff6d2d5bd11f",
+    "     sp: 0000000080041980",
+    "     ra: 0000000080004b10",
+    "   mepc: 0000000080003774",
+    "mstatus: 8000000000019880",
+    "",
+    "call trace:",
+    "      0: sp: 0000000080041980 ra: 0000000080003774",
+    "",
+    "MB_PEXT_NEG cpu=1 mhartid=1 trapped=1 reason=0 mcause=2 mtval=0x00d7070b",
+    "   hart 1 refused 0x00d7070b -- custom-0, funct3=0: MBP is on hart 0 only, as specified",
+    "RESULT: PASS -- the MBP kernels ran bit-exact on hart 0 and the same instruction is illegal on hart 1"
+   ]
+  },
+  "scalar": {
+   "run_name": "b189_scalar",
+   "kernels": {
+    "conv2d_s8_pc": "reference C",
+    "permute4_s8": "reference C",
+    "softmax_s8": "reference C"
+   },
+   "picks_source": {
+    "conv2d_s8_pc": "reference",
+    "permute4_s8": "reference",
+    "softmax_s8": "reference"
+   },
+   "custom0_instructions_in_elf": 1,
+   "image_bytes": 140964,
+   "cycles": {
+    "median": 163923052,
+    "min": 163920254,
+    "max": 163926642,
+    "warm_first": 163924797,
+    "row_sum": 163924131,
+    "row_sum_minus_median": 1079
+   },
+   "ms_at_clk": 4098.0763,
+   "cyc_per_mac": 21.761977361167755,
+   "ops": [
+    {
+     "id": 0,
+     "name": "conv1",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=3;IH=64;IW=64;OC=16;OH=32;OW=32;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1",
+     "cycles": 10687289,
+     "mac": 442368,
+     "cyc_per_mac": 24.159272370515048,
+     "pct": 6.519698644947143
+    },
+    {
+     "id": 1,
+     "name": "conv2",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=16;IH=32;IW=32;OC=32;OH=16;OW=16;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1",
+     "cycles": 26614336,
+     "mac": 1179648,
+     "cyc_per_mac": 22.56125217013889,
+     "pct": 16.235871450221655
+    },
+    {
+     "id": 2,
+     "name": "conv3",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=32;IH=16;IW=16;OC=32;OH=16;OW=16;KH=3;KW=3;SH=1;SW=1;PH=1;PW=1",
+     "cycles": 50937793,
+     "mac": 2359296,
+     "cyc_per_mac": 21.59025107489692,
+     "pct": 31.074209745679944
+    },
+    {
+     "id": 3,
+     "name": "conv4",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=32;IH=16;IW=16;OC=64;OH=8;OW=8;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1",
+     "cycles": 25645999,
+     "mac": 1179648,
+     "cyc_per_mac": 21.740382724338108,
+     "pct": 15.645144893959149
+    },
+    {
+     "id": 4,
+     "name": "conv5",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=64;IH=8;IW=8;OC=64;OH=8;OW=8;KH=3;KW=3;SH=1;SW=1;PH=1;PW=1",
+     "cycles": 48684531,
+     "mac": 2359296,
+     "cyc_per_mac": 20.635194142659504,
+     "pct": 29.699624553110443
+    },
+    {
+     "id": 5,
+     "name": "head",
+     "op": "conv2d_s8_pc",
+     "shape": "N=1;IC=64;IH=8;IW=8;OC=3;OH=8;OW=8;KH=1;KW=1;SH=1;SW=1;PH=0;PW=0",
+     "cycles": 454883,
+     "mac": 12288,
+     "cyc_per_mac": 37.018473307291664,
+     "pct": 0.27749788358015687
+    },
+    {
+     "id": 6,
+     "name": "permute",
+     "op": "permute4_s8",
+     "shape": "d0=1;d1=3;d2=8;d3=8;p0=0;p1=2;p2=3;p3=1",
+     "cycles": 9697,
+     "mac": 0,
+     "cyc_per_mac": null,
+     "pct": 0.00591558043953452
+    },
+    {
+     "id": 7,
+     "name": "softmax",
+     "op": "softmax_s8",
+     "shape": "M=64;K=3",
+     "cycles": 889603,
+     "mac": 0,
+     "cyc_per_mac": null,
+     "pct": 0.5426954837322087
+    }
+   ],
+   "gate": {
+    "board_vs_golden_bytes_differ": 0,
+    "max_abs_err": 0,
+    "pass": true
+   },
+   "ir_graph_md5": "70a0ac6d37a0bf99a6733f40e5e64073",
+   "gen_kernels_c_md5": "3c9bcaf92dec52668773cfaf41045209",
+   "gen_weights_c_md5": "e706082b34c472af1e9ad072eb5b88b4",
+   "kernel_picks_digest": "aea9440b8e72280324cbaeddc2d975a6",
+   "console": [
+    "*** Booting Zephyr OS build 4329bf61c4fe ***",
+    "",
+    "MB_PEXT_BUILD model=signdet_b144 quant=int8 ops=8 iters=11 hw=1",
+    "MB_PEXT_BUILD main_cpu=0 main_hartid=0 cpus=2",
+    "MB_PEXT_RUN cpu=0 mhartid=0 median=163923052 min=163920254 max=163926642 warm=163924797 mtime=163925 max_abs_err=0",
+    "MB_PEXT_OP id=0 name=conv1 op=conv2d_s8_pc shape=N=1;IC=3;IH=64;IW=64;OC=16;OH=32;OW=32;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1 cycles=10687289",
+    "MB_PEXT_OP id=1 name=conv2 op=conv2d_s8_pc shape=N=1;IC=16;IH=32;IW=32;OC=32;OH=16;OW=16;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1 cycles=26614336",
+    "MB_PEXT_OP id=2 name=conv3 op=conv2d_s8_pc shape=N=1;IC=32;IH=16;IW=16;OC=32;OH=16;OW=16;KH=3;KW=3;SH=1;SW=1;PH=1;PW=1 cycles=50937793",
+    "MB_PEXT_OP id=3 name=conv4 op=conv2d_s8_pc shape=N=1;IC=32;IH=16;IW=16;OC=64;OH=8;OW=8;KH=3;KW=3;SH=2;SW=2;PH=1;PW=1 cycles=25645999",
+    "MB_PEXT_OP id=4 name=conv5 op=conv2d_s8_pc shape=N=1;IC=64;IH=8;IW=8;OC=64;OH=8;OW=8;KH=3;KW=3;SH=1;SW=1;PH=1;PW=1 cycles=48684531",
+    "MB_PEXT_OP id=5 name=head op=conv2d_s8_pc shape=N=1;IC=64;IH=8;IW=8;OC=3;OH=8;OW=8;KH=1;KW=1;SH=1;SW=1;PH=0;PW=0 cycles=454883",
+    "MB_PEXT_OP id=6 name=permute op=permute4_s8 shape=d0=1;d1=3;d2=8;d3=8;p0=0;p1=2;p2=3;p3=1 cycles=9697",
+    "MB_PEXT_OP id=7 name=softmax op=softmax_s8 shape=M=64;K=3 cycles=889603",
+    "MB_PEXT_OUT <192 bytes, elided: the trained model's output on one frame is not published -- docs/SIGNDET_WEIGHTS.md>",
+    "   hart 0 (big): median 4098.076 ms   max_abs_err=0",
+    "MB_PEXT_NEG starting -- one MBP.DOT8 pinned to CPU 1; an illegal-instruction trap here is the PASS",
+    "",
+    " mcause: 2, Illegal instruction",
+    "  mtval: d7070b",
+    "     a0: 0000000000000000    t0: 0000000000000000",
+    "     a1: 0000000000000000    t1: 000000008000703a",
+    "     a2: 0000000000000000    t2: 0000000000000000",
+    "     a3: 0101010101010101    t3: 0000000000000000",
+    "     a4: 0102030405060708    t4: 0000000000000000",
+    "     a5: 0000000080022768    t5: 0000000000000000",
+    "     a6: 0000000000000000    t6: 0000000000000000",
+    "     a7: 0000000000000000",
+    "     sp: 000000008002f960",
+    "     ra: 0000000080002894",
+    "   mepc: 000000008000169c",
+    "mstatus: 8000000000019880",
+    "",
+    "call trace:",
+    "      0: sp: 000000008002f960 ra: 000000008000169c",
+    "",
+    "MB_PEXT_NEG cpu=1 mhartid=1 trapped=1 reason=0 mcause=2 mtval=0x00d7070b",
+    "   hart 1 refused 0x00d7070b -- custom-0, funct3=0: MBP is on hart 0 only, as specified",
+    "RESULT: PASS -- the MBP kernels ran bit-exact on hart 0 and the same instruction is illegal on hart 1"
+   ]
+  }
+ },
+ "console_note": "Each console is verbatim but for its MB_PEXT_OUT line. Whether the board computed the right answer is carried in each arm's `gate`: 0 of 192 bytes differ from the host-C golden, max |d| = 0."
+}
