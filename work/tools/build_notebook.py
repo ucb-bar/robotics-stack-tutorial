@@ -222,10 +222,12 @@ md("""### 1.2 Build a Zephyr image for the Rocket SoC
 Build `samples/boot_info`, the application currently running on your board. It reports
 the board's status and network connection. The recorded build took about thirteen
 seconds.""")
-code('''lab.sh("""cd /home/ubuntu/tut && source /home/ubuntu/tut/env.sh && \\
+code('''build = lab.sh("""cd /home/ubuntu/tut && source /home/ubuntu/tut/env.sh && \\
 west build -p always -b chipyard_pynqz1_all_f40 \\
     -d ~/out/boot_info samples/boot_info \\
-    -- -DBOARD_ROOT=/home/ubuntu/tut""", timeout=900)''')
+    -- -DBOARD_ROOT=/home/ubuntu/tut""", timeout=900)
+if not build.ok:
+    raise RuntimeError("the build failed -- read the log above before going on")''')
 md("The build ends with a summary of memory use:\n\n" + fence(
     "-- west build: building application\n...\n"
     "Memory region         Used Size  Region Size  %age Used\n"
@@ -1241,8 +1243,10 @@ code. The shared window lets you compare when each core performs model work.
 
 Build the capture application with the next cell. It includes both models and takes
 a few minutes to build.""")
-code('''lab.sh("""cd /home/ubuntu/tut && source /home/ubuntu/tut/env.sh && \\
-./scripts/90_b156_tacit_window.sh --name lab3 --build-only""", timeout=1800)''')
+code('''build = lab.sh("""cd /home/ubuntu/tut && source /home/ubuntu/tut/env.sh && \\
+./scripts/90_b156_tacit_window.sh --name lab3 --build-only""", timeout=1800)
+if not build.ok:
+    raise RuntimeError("the build failed -- read the log above before going on")''')
 md("""Look for `lab3_duo: bin=1096544 B  window_ms=13000 frames=0 kws_s=60` at the end of
 the build.
 
@@ -1313,10 +1317,11 @@ size declared by the board:
     "  hart 0: tacit0.out.gz, 2,604,891 B (the card declared 2,604,891)\n"
     "  hart 1: tacit1.out.gz, 543,746 B (the card declared 543,746)") + """
 
-The downloaded `tacit0.out.gz` and `tacit1.out.gz` contain your capture. The timeline
-in 3.5 comes from a separate capture decoded in advance.
+The downloaded `tacit0.out.gz` and `tacit1.out.gz` contain your capture. You will
+decode them below.
 
-**Restore the board before continuing.** Run the next cell to reload the `all`
+**Restore the board before continuing.** Decoding needs only your instance, so the board
+is free from here on. Run the next cell to reload the `all`
 bitstream and restart `boot_info`.""")
 code('''lab.board("bitstream", "all")
 lab.board("run", "boot_info", timeout=300)''')
@@ -1327,11 +1332,35 @@ The loader checks the FPGA configuration, and the run log should contain:
 
 The OLED's uptime counter should restart at `up 0:00`.""")
 
-md("""### 3.5 Compare both cores on a shared timeline
+md("""### 3.5 Decode your capture
 
-This section reads supplied lane statistics from `assets/lane_timeline.json`. Each
-lane represents one core in a capture decoded before the session. The next cell
-summarizes the work recorded on each lane.""")
+The encoders wrote compressed instruction deltas, not function names. Only the decoder
+can turn those back into a timeline, and it needs the same binary the board ran: given a
+different build it reports a mismatch rather than inventing names.
+
+Decoding about 30 MB takes five to eight minutes. Start the next cell and read on.""")
+code('''summary = lab.decode_capture(["tacit0.out.gz", "tacit1.out.gz"],
+                            "/home/ubuntu/tut/out/lab3_duo/zephyr.elf")
+lab.show_decode_check(summary)''')
+md("""The check prints the two fields that separate a real decode from an empty one:
+
+""" + fence(
+    "lane 0: 81,465 events, 178 distinct function names\n"
+    "  first  z_prep_c\n"
+    "lane 1: 50,342 events, 103 distinct function names\n"
+    "  first  boot_secondary_core") + """
+
+A decoder that never finds a synchronisation point still exits successfully and still
+writes a file, so file size proves nothing. The number of **distinct** function names does:
+a lane carrying one repeated name did not decode. Hart 0 begins in `z_prep_c`, the boot
+code that clears memory, and hart 1 in `boot_secondary_core`, where the second core starts.
+
+Decoding writes `lane_timeline.json` beside your notebook, which the next section reads.
+
+### 3.6 Compare both cores on a shared timeline
+
+Each lane represents one core of your capture. The next cell summarizes the work
+recorded on each lane. If you skipped the decode, it falls back to a supplied capture.""")
 code('''lanes = lab.lane_table()
 lab.show_lane_table(lanes)''')
 md("""Compare how much of the capture window each hart spends in model functions:
@@ -1608,7 +1637,110 @@ md(fixes_table([
     ("The log stays quiet while the cell runs", "Python may buffer its output. Allow time for startup; the full command took about three seconds in the recorded run. Ask the instructor for help if it remains quiet for minutes."),
 ]))
 
-md("""### 5.2 Compare schedules for two models
+md("""### 5.2 Measure the operator costs on your own board
+
+The eight durations 5.1 scheduled against were measured, not estimated: each is the number
+of cycles one operator invocation took on a board like yours. `--profiled` is the flag that
+makes the solver read those measurements instead of modelling the operators. This section
+produces them again on your own card and re-solves the same schedule from your numbers.
+
+The image below is the detector, built to time itself. It runs SignDetLite eleven times and
+prints one line per dispatch giving the dispatch id, the operator name, the kernel op it
+selected, the tensor shape, and the cycles that invocation took.
+
+It ships with the notebook instead of being rebuilt here, and that is part of the method: a
+per-dispatch cycle count is a measurement of one binary. The same kernels compiled with
+different options, or with a different calibration frame baked in as the test input, time
+differently. The memoised softmax moves by several percent on the input alone, because how
+many rows it can skip depends on the values it is handed. Pushing the image the recorded
+profile was measured from is what makes the comparison below one between two boards.""")
+code('''lab.board_put(lab.profile_image(), "zephyr.bin")
+lab.board("bitstream", "all")
+ran = lab.board("run", "zephyr", timeout=300)''')
+md("""The card loads the bitstream, boots the image, and reads its console for the length of
+the run.
+
+The next cell reads that console back. It prints the image's own two summary lines first,
+then one row per dispatch. The dispatch id is the join key for everything that follows:
+operator names repeat inside a network, and ids do not.""")
+code('''console = lab.console_text(lab.board("get", "console.out", binary=True, verbose=False))
+lab.show_console_lines(console, "MB_PEXT_BUILD", "MB_PEXT_RUN")
+rows = lab.measured_dispatch_rows(console)
+lab.show_measured_dispatches(rows)''')
+md("""The build line names the model, the number of operators in it, and how many times the
+image ran the frame. The run line gives the minimum, median and maximum of those frames in
+cycles, and `max_abs_err=0` says every one of them produced the expected output. These are
+timings of a run that was also correct.
+
+Compare the `cycles` column against `shipped`, the cost the schedule in 5.1 used for that
+same dispatch. Both are runs of the same image under the same bitstream at the same clock, on
+two different cards. The five convolutions that dominate the frame, `conv1` to `conv5`, agree
+to about a tenth of one percent. The cheap dispatches vary by more, because a fixed
+per-dispatch overhead is a larger share of a small number. The minimum-to-maximum spread the
+run line reports across its eleven frames is of the same size as these differences, so one
+run on each card cannot tell how much of them belongs to the boards and how much to
+run-to-run variation.
+
+Read down the cycles column to see where the frame goes. `conv3` and `conv5` together take
+more than sixty percent of it, and both are the 3x3 convolutions that keep their spatial
+size instead of halving it. `permute` costs about two thousand cycles, some 1,500 times less
+than `conv5`, because it moves bytes and multiplies nothing.
+
+The next cell converts those rows into the file the scheduler reads.""")
+code('''profile = lab.write_measured_profile(rows)''')
+md("""XPU-RT ingests per-dispatch costs as a `results.csv` under a directory tree named by
+backend, target, model and core topology, and `scripts/uartlog_to_profile.py` is the
+converter that writes one. It reads a profile block: a header naming the five fields, then
+one row per dispatch. Those are the same five fields the board's console lines carry, which
+is why the console needs no separate ingest path -- the rows are written into the block and
+the project's own converter does the rest. It divides cycles by the clock to get the times
+the CSV states, and reports the total it read.
+
+The second machine's file is carried over from the shipped workload unchanged. Every row in
+it is an exclusion rather than a cost: `conv2d_s8_pc` has no engine kernel at all, and the
+kernels bound for `permute4_s8` and `softmax_s8` are built from instructions the second core
+does not implement -- the same instructions the negative control in Unit 4 confirmed that
+core rejects.
+Those are properties of the kernel library and of the two cores' instruction sets. They are
+not timings, and no board run can measure them.
+
+Everything else in the workload is reused as it is -- the dispatch graph, the period, the
+detection window -- so the only difference between the next solve and 5.1's is which cycle
+counts the costs came from.""")
+code('''if profile:
+    lab.sh(f"""source /etc/profile.d/xpurt.sh && cd $XPURT_ROOT && \\
+XPURT_CPSAT_WORKERS=1 $XPURT_PYTHON scripts/run_xpurt_schedule.py \\
+  --networks-json {profile} \\
+  --solver cpsat --profiled --cpsat-time-limit 60""", timeout=300)''')
+md("""This is 5.1's command with your workload in place of the shipped one. Find `pdb_hash`
+near the end of the output: it is a digest over the profile CSVs this solve read, so it
+differs from the one 5.1 printed. The schedule was solved from different files.""")
+code('''lab.compare_measured_makespan()''')
+md("""The recorded run printed:
+
+""" + fence(
+    "shipped profile    makespan_us  237.87     9,514,643 cycles   op_deadline_miss 0\n"
+    "your board         makespan_us  237.79     9,511,373 cycles   op_deadline_miss 0\n\n"
+    "Your board ran the frame in -3,270 cycles, -0.034% of the recorded frame.") + """
+
+The two makespans track the two cycle totals because of how this workload is placed. All
+eight dispatches are pinned to the P-core, they depend on each other in a chain, and one
+detection has to finish inside its window. So the schedule is the eight costs end to end, and
+its duration is their sum divided by the clock. The solver starts dispatches on whole
+microseconds, so the makespan can land a few microseconds above the total the table printed.
+Your makespan is your measurement.
+
+That is also the limit of what one board can change here. A profile moves a schedule when it
+changes which placement is cheapest, and with one feasible placement there is nothing for it
+to change. The next section is the case where it does: two models, two cores, and costs that
+decide where each operator runs.""")
+md(fixes_table([
+    ("`board offline` or `STUB`", "Nothing ran on the card and no cell after it has data. Re-run `lab.board_status()` from Unit 1 and ask the instructor if it does not come back."),
+    ("`No MB_PEXT_OP lines in that console`", "The console came back without the per-dispatch rows, so the run did not reach them. Re-run the two board cells above."),
+    ("`Not written: no XPU-RT checkout on this machine`", "The conversion and the solve both need the XPU-RT install, the same one 5.1 uses. 5.3 below needs none of it."),
+]))
+
+md("""### 5.3 Compare schedules for two models
 
 Now consider SignDetLite and Moonshine sharing two harts with different instruction
 sets and a common memory system. SignDetLite runs four times at **1,000 ms intervals**.
@@ -1635,7 +1767,7 @@ Each configuration selects one option from each row:
 | Compaction | `plain` keeps the generated schedule; `compact` applies the compaction pass. |
 
 These choices give 11 × 2 × 2 = 44 configurations, each with 2,285 dispatches.
-Section 5.3 lets you rerun one of them.
+Section 5.4 lets you rerun one of them.
 
 </details>""")
 code('''sweep = lab.schedule_sweep()
@@ -1687,8 +1819,8 @@ reports a capacity estimate of 2.62 fps.
 </details>""")
 code('''lab.show_compaction(sweep)
 lab.show_refused_cells(sweep)''')
-md("""The validation report rejects four configurations with forbidden device assignments
-involving 74 dispatches. They place `linear_s8` on a core marked infeasible by the
+md("""The validation report rejects four configurations with forbidden device assignments,
+74 exclusion violations in all. They place `linear_s8` on a core marked infeasible by the
 dispatch graph and `permute4_s8` on the hart without the P-extension. Those kernels
 would execute unsupported instructions on their assigned cores.
 
@@ -1707,7 +1839,7 @@ Excluding those results leaves the best valid completion time unchanged.
 
 </details>""")
 
-md("""### 5.3 Optional: solve one configuration
+md("""### 5.4 Optional: solve one configuration
 
 Rerun the FIFO configuration with no memory contention and no compaction. Allow
 about half a minute for this heuristic run. The full 44-configuration sweep takes
@@ -1717,12 +1849,14 @@ The solve needs three things this repository does not carry: an XPU-RT checkout,
 interpreter with `ortools`, and that checkout's git history -- the sweep checks XPU-RT
 against the revision the recorded numbers came from before it solves anything, and it
 cannot check a tree that was copied rather than cloned. The cell names whichever of the
-three it cannot find, and 5.2 above carries the whole result without any of them.
+three it cannot find, and 5.3 above carries the whole result without any of them.
 
 The first cell prepares the configuration's working directory. The supplied sweep
-has a path problem and can exit successfully without producing a schedule. If it
-prints `the sweep produced NO schedule`, continue with the second cell, which applies
-the workaround. Check the schedule output to confirm that the solve succeeded.""")
+has a path problem and can exit successfully without producing a schedule. On the
+tutorial instances the cell stops before that, on the revision check, and says so: the
+supplied XPU-RT tree was copied rather than cloned. Where the cell does run and prints
+`the sweep produced NO schedule`, continue with the second cell, which applies the
+workaround, and check the schedule output to confirm that the solve succeeded.""")
 code('''farm = lab.run_sweep_cell(policy="fifo")''')
 md("""Run the solver using the copy of the script inside the configuration's own working
 directory, where the previous cell prepared the input data. The solve runs only if that

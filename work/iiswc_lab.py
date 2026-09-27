@@ -18,6 +18,7 @@ Swapping the real transport in is one edit: `_board_exec()`, below.
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import shlex
@@ -529,6 +530,118 @@ def fetch_drained_lanes(drained: BoardResult, dest: Path | None = None) -> list[
         print(f'  hart {lane["hart"]}: {lane["name"]}, {len(got):,} B '
               f'(the card declared {lane["gz_bytes"]:,})')
     return here
+
+
+def _decoder() -> Path:
+    """The TACIT decoder, or a message naming what to do about it.
+
+    env.sh resolves TACIT_DECODER into the repository's third_party/ tree, which a seat does
+    not have; /etc/profile.d/iiswc-mbtools.sh points it at ~/mb-tools instead. lab.sh() runs a
+    login shell so a cell sees that, but a bare os.environ in this kernel may not, so both are
+    consulted before giving up.
+    """
+    for cand in (os.environ.get("TACIT_DECODER", ""),
+                 str(Path.home() / "mb-tools" / "bin" / "ltrace-decoder")):
+        if cand and os.access(cand, os.X_OK):
+            return Path(cand)
+    raise FileNotFoundError(
+        "no TACIT decoder on this instance. It is installed as "
+        "~/mb-tools/bin/ltrace-decoder; ask an instructor if it is absent.")
+
+
+def _summarise_timeline(merged: Path, trace_label: str) -> dict:
+    """Reduce a merged Perfetto file to the per-lane table the timeline cells read.
+
+    WHAT IS COUNTED AND WHY. A decode that exits zero can still be empty, and size tells you
+    nothing: a lane that stopped mid-packet and a lane that ran the whole window produce files
+    of similar length. The two fields that separate them are the number of DISTINCT function
+    names on each lane and the name of its first event, so both are recorded here rather than
+    left for a reader to compute.
+    """
+    events = json.loads(merged.read_text())
+    events = events["traceEvents"] if isinstance(events, dict) else events
+    per: dict = {}
+    for e in events:
+        if e.get("ph") not in ("B", "X") or "name" not in e:
+            continue
+        per.setdefault(e.get("tid", e.get("pid")), []).append(e)
+    lanes: dict = {}
+    for tid, evs in sorted(per.items()):
+        names: dict = {}
+        for e in evs:
+            names[e["name"]] = names.get(e["name"], 0) + 1
+        ts = [e["ts"] for e in evs if "ts" in e]
+        top = sorted(names.items(), key=lambda kv: -kv[1])[:5]
+        lanes[str(tid)] = {
+            "name": str(tid),
+            "events": len(evs),
+            "distinct": len(names),
+            "ts_min": min(ts) if ts else 0,
+            "ts_max": max(ts) if ts else 0,
+            "first_ev": [evs[0]["name"], evs[0].get("ts", 0)] if evs else ["", 0],
+            "last_ev": [evs[-1]["name"], evs[-1].get("ts", 0)] if evs else ["", 0],
+            "top": [[n, c] for n, c in top],
+        }
+    return {"trace": trace_label, "lanes": lanes}
+
+
+def decode_capture(lanes: list[Path] | list[str], elf: str | Path,
+                   out: str = "lane_timeline.json", timeout: int = 1800) -> dict:
+    """Decode the two drained lanes into one timeline of function calls.
+
+    The encoders wrote compressed instruction deltas; only the decoder, holding the same
+    binary the board ran, can turn those back into named calls. Pass the .elf that produced
+    the capture: a decoder given a different build reports a mismatch rather than nonsense.
+    """
+    dec = _decoder()
+    elf = Path(elf)
+    if not elf.is_file():
+        raise FileNotFoundError(f"no such binary: {elf}. Decode needs the .elf the board ran.")
+    raw = []
+    for lane in sorted(Path(p) for p in lanes):
+        if lane.suffix == ".gz":
+            plain = lane.with_suffix("")
+            with gzip.open(lane, "rb") as fh:
+                plain.write_bytes(fh.read())
+            lane = plain
+        raw.append(lane)
+    if len(raw) != 2:
+        raise ValueError(f"expected two lanes to decode, got {len(raw)}: {raw}")
+    merged = raw[0].parent / "trace.merged.perfetto.json"
+    labels = ("hart 0 (BIG, MBP) signdet_live", "hart 1 (LITTLE, scalar) kws_live")
+    cmd = [str(dec), "--binary", str(elf), "--encoder", "rtl", "--to-perfetto"]
+    for i, (lane, label) in enumerate(zip(raw, labels)):
+        cmd += ["--trace", f"{lane}:{i}:{label}"]
+    cmd += ["--merged-perfetto", str(merged)]
+    print(f"decoding {sum(p.stat().st_size for p in raw):,} bytes with {dec.name} "
+          f"-- this takes several minutes")
+    t0 = time.time()
+    # --to-txt is deliberately NOT passed: it writes gigabytes of per-instruction text and
+    # roughly triples the wall clock, and nothing downstream of here reads it.
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-6:]
+        raise RuntimeError("decode failed:\n  " + "\n  ".join(tail))
+    print(f"  decoded in {time.time() - t0:.0f}s -> {merged.name}")
+    summary = _summarise_timeline(merged, str(merged))
+    Path(out).write_text(json.dumps(summary, indent=2))
+    return summary
+
+
+def show_decode_check(summary: dict) -> None:
+    """What a real decode looks like, next to what an empty one looks like.
+
+    A decoder that finds no synchronisation point still exits zero and still writes a file.
+    The counts below are what separate the two, so they are printed rather than assumed.
+    """
+    for tid, lane in sorted(summary["lanes"].items()):
+        print(f"lane {tid}: {lane['events']:,} events, {lane['distinct']} distinct "
+              f"function names")
+        print(f"  first  {lane['first_ev'][0]}")
+        busiest = ", ".join(f"{n} x{c:,}" for n, c in lane["top"][:3])
+        print(f"  busiest  {busiest}")
+    if any(l["distinct"] < 10 for l in summary["lanes"].values()):
+        print("\nA lane with almost no distinct names did not decode. Ask an instructor.")
 
 
 def lane_table(asset: str = "lane_timeline.json") -> dict:
@@ -1062,6 +1175,8 @@ def _total(run) -> str:
 def optimizer_figure(run: str | Path, title: str = "Every kernel the search tried"):
     """Every kernel the search produced, in cycles per output: spike for each candidate,
     and the FPGA for the round's best, with and without the MBP."""
+    if _no_run(run, "plot"):
+        return
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
@@ -1266,6 +1381,22 @@ def _calls(run) -> list[dict]:
     return [json.loads(l) for l in p.read_text().splitlines() if l.strip()] if p.exists() else []
 
 
+def _no_run(run, what: str = "read") -> bool:
+    """True when there is no run to read, having said so in words that name the cause.
+
+    mb_start() and mb_try() return None ON PURPOSE when a run could not happen: no model
+    credentials on this instance, or a board that never answered. Handing that None to a
+    reader raised `TypeError: argument should be a str or an os.PathLike object` three
+    frames further down, which names neither the cell that failed nor the reason.
+    """
+    if run is not None:
+        return False
+    print(f"no run to {what}: the cell above did not produce one.")
+    print("      Its own output says why -- usually no model credentials on this")
+    print("      instance, or a board that did not answer in time.")
+    return True
+
+
 def show_search_shape(run: str | Path) -> None:
     """How big the search was: rounds, phases, calls, and what each call cost.
 
@@ -1273,6 +1404,8 @@ def show_search_shape(run: str | Path) -> None:
     what was ASKED for and the log says what happened -- a round that found no
     improvement stops early, and then the two disagree.
     """
+    if _no_run(run, "read"):
+        return
     rows = _calls(run)
     if not rows:
         print(f"no calls in {Path(run).name}: a replayed or hand-written kernel calls no model")
@@ -1345,6 +1478,8 @@ def show_board_feedback(run: str | Path) -> None:
     thing in the loop that knows what the silicon actually did.  A run that kept only its
     prompts has the same text in the last round's system prompt.
     """
+    if _no_run(run, "read"):
+        return
     run = Path(run)
     fb = next((p for p in (run / "after/board_feedback.md", run / "fpga-feedback.md") if p.exists()), None)
     text = fb.read_text().rstrip() if fb else next(
@@ -1419,6 +1554,8 @@ def show_board_verdict(run: str | Path) -> None:
     Three images, one bitstream, same data: the reference kernel, the new kernel, and the
     new kernel with the MBP instruction replaced by a C model of it.
     """
+    if _no_run(run, "read"):
+        return
     run = Path(run)
     b = _board(run)
     j = _jsonf(run / "run.json") or {}
@@ -1578,7 +1715,7 @@ XPURT_PROFILE = Path("/etc/profile.d/xpurt.sh")
 #: given, so this one name fixes both the metrics file and the plot.
 XPURT_SCHEDULE = "networks_b154_gate_cpsat_profiled"
 
-#: The recorded 44-cell sweep 5.2 reads instead of re-solving.
+#: The recorded 44-cell sweep 5.3 reads instead of re-solving.
 SWEEP_GOLDEN = "expected/xpurt_coloc2m_b157.json"
 
 
@@ -1623,7 +1760,18 @@ def solved_metrics(name: str = XPURT_SCHEDULE) -> dict:
     root = xpurt_root()
     if root is None:
         raise FileNotFoundError("no XPU-RT tree on this machine, so no solve to read")
-    return json.loads((root / "schedules" / f"scheduled_{name}_metrics.json").read_text())
+    path = root / "schedules" / f"scheduled_{name}_metrics.json"
+    # THE IMAGE SHIPS A PASSING METRICS FILE.  A bare read cannot tell a solve that ran from
+    # one that never did, so a cell whose solve failed still prints MATCH.  Anything older
+    # than this instance's boot came out of the image, not out of the cell above.
+    try:
+        boot = next(float(l.split()[1]) for l in open("/proc/stat") if l.startswith("btime"))
+        if path.stat().st_mtime < boot:
+            print(f"NOTE: {path.name} predates this instance's boot, so it is the image's\n"
+                  f"      schedule and not one you solved.  Run the cell above first.")
+    except (OSError, StopIteration, ValueError):
+        pass          # a freshness hint is never worth failing the read for
+    return json.loads(path.read_text())
 
 
 def check_solved_makespan(want_us: float, name: str = XPURT_SCHEDULE) -> bool:
@@ -1648,7 +1796,7 @@ def schedule_plot(name: str = XPURT_SCHEDULE):
 def schedule_sweep(rel: str = SWEEP_GOLDEN) -> dict:
     """The recorded co-location sweep: all 44 cells, the refusals and the compaction table.
 
-    Reading it is what makes 5.2 need no solver, no XPU-RT and no artifacts.
+    Reading it is what makes 5.3 need no solver, no XPU-RT and no artifacts.
     """
     path = repo_file(rel)
     if path is None:
@@ -1878,6 +2026,8 @@ def schedule_comparison_figure(golden: dict):
                xycoords=("data", "axes fraction"), textcoords="offset points",
                xytext=(-8, 0), ha="right", va="top", fontsize=7.5, color=BAD)
     fig.tight_layout()
+    plt.close(fig)   # the inline backend auto-shows a live figure, and
+                     # returning it renders a second copy
     return fig
 
 
@@ -1920,6 +2070,8 @@ def lane_timeline_figure(lanes: dict):
     _axes_style(ax)
     ax.grid(axis="y", color=GRID, lw=0.6, zorder=0)
     fig.tight_layout()
+    plt.close(fig)   # the inline backend auto-shows a live figure, and
+                     # returning it renders a second copy
     return fig
 
 
@@ -1991,4 +2143,283 @@ def kernel_speedup_figure(board: dict):
              bbox_to_anchor=(0.0, 1.10), ncols=2)
     _axes_style(b)
     fig.tight_layout()
+    plt.close(fig)   # the inline backend auto-shows a live figure, and
+                     # returning it renders a second copy
     return fig
+
+
+# --------------------------------------------------------------------------------------
+# Measuring an operator profile on your own board, and solving from it (Unit 5).
+#
+# The schedule 5.1 solves is built from per-dispatch costs that were measured on a board:
+# one cycle count per operator invocation, read off a console. These helpers close that
+# loop inside the notebook -- run the detector on this seat's own card, convert what it
+# printed with XPU-RT's own converter, and point the scheduler at the result.
+#
+# The board's profiling image prints one `MB_PEXT_OP` line per dispatch, carrying the
+# same five fields (`dispatch_id`, `name`, `op`, `shape`, `cycles`) that a ModelBlaster
+# harness prints between its `MODELBLASTER_PROFILE` markers. `scripts/uartlog_to_profile.py`
+# reads that block and writes the results.csv; putting the console's fields into the block
+# is the whole conversion, and it is the reason the board needs no separate ingest path.
+# --------------------------------------------------------------------------------------
+#: The detector image that profiles itself: one cycle count per dispatch, on the console.
+PROFILE_IMAGE = "signdet_profile.bin"
+
+#: The PL clock the profiling bitstream runs the core at. Cycles become times here and
+#: nowhere else, so a board at another clock is one number's worth of change.
+PROFILE_CLOCK_MHZ = 40.0
+
+#: Where the measured profile tree and its workload spec are written.
+MEASURED_DIR = Path.home() / "work" / "measured_profile"
+
+#: The workload spec the measured profile is solved from, and the schedule it names.
+MEASURED_SPEC = "networks_measured_on_your_board.json"
+MEASURED_SCHEDULE = "networks_measured_on_your_board_cpsat_profiled"
+
+#: The shipped workload spec 5.1 solves. Everything about it is reused except the one
+#: profile tree the measured costs replace.
+SHIPPED_SPEC = "data/toplevel/networks_b154_gate.json"
+
+#: The console tag the profiling image prints one of per dispatch.
+_OP_TAG = "MB_PEXT_OP "
+
+
+def profile_image() -> Path:
+    """The detector profiling image to push to the card."""
+    path = Path(PROFILE_IMAGE)
+    return path if path.exists() else ASSETS / PROFILE_IMAGE
+
+
+def measured_dispatch_rows(console: str) -> list[dict]:
+    """The board's per-dispatch cycle counts, one row per operator invocation.
+
+    Each `MB_PEXT_OP` line is `key=value` pairs, so this reads pairs rather than columns:
+    a line that gains a field keeps parsing. The dispatch id is the join key everywhere
+    downstream -- names repeat across a network, ids do not.
+    """
+    rows: list[dict] = []
+    for line in console.splitlines():
+        line = line.strip()
+        if not line.startswith(_OP_TAG):
+            continue
+        kv = dict(tok.split("=", 1) for tok in line[len(_OP_TAG):].split()
+                  if "=" in tok)
+        if "id" not in kv or "cycles" not in kv:
+            continue
+        rows.append({"dispatch_id": int(kv["id"]), "name": kv.get("name", ""),
+                     "op": kv.get("op", ""), "shape": kv.get("shape", ""),
+                     "cycles": int(kv["cycles"])})
+    return rows
+
+
+def _profile_csv(spec: dict, core: str = "cpu_p") -> Path | None:
+    """The results.csv a workload spec reads for one of its two machines.
+
+    XPU-RT finds a profile by building a path out of the spec: the profile tree, the
+    backend label for that machine, the target, the model and the core topology. This
+    walks the same path so a cell can read the file the solver read.
+    """
+    root = xpurt_root()
+    if root is None:
+        return None
+    prof = spec.get("hardware", {}).get("profile", {})
+    hw = spec.get("hardware", {}).get("profile_hw", {}).get(core)
+    nets = spec.get("networks", {})
+    if not (hw and nets and prof.get("target")):
+        return None
+    net = next(iter(nets))
+    gen = Path(prof.get("gen_root", "gen"))
+    base = (gen if gen.is_absolute() else root / gen) / "profile" / hw / prof["target"] / net
+    topo = prof.get("topo_tag", "topo_0")
+    for pat in (f"{net}.*/{topo}/results.csv", f"{net}.*/*/{topo}/results.csv"):
+        hits = sorted(base.glob(pat))
+        if hits:
+            return hits[0]
+    return None
+
+
+def _csv_cycles(path: Path | None) -> dict[int, int]:
+    """dispatch_id -> cycles, out of a profile results.csv."""
+    import csv as _csv
+
+    out: dict[int, int] = {}
+    if path is None or not Path(path).exists():
+        return out
+    with open(path, newline="") as fh:
+        for row in _csv.DictReader(fh):
+            try:
+                out[int(row["dispatch_id"])] = int(row["cycles"])
+            except (KeyError, TypeError, ValueError):
+                continue     # a sentinel row carries no cycle count, by design
+    return out
+
+
+def _shipped_spec() -> dict | None:
+    root = xpurt_root()
+    if root is None or not (root / SHIPPED_SPEC).exists():
+        return None
+    return json.loads((root / SHIPPED_SPEC).read_text())
+
+
+def show_measured_dispatches(rows: list[dict]) -> None:
+    """Every dispatch the board timed, beside the cost the shipped schedule used."""
+    if not rows:
+        print("No MB_PEXT_OP lines in that console, so nothing was timed. Check that the\n"
+              "board cells above reported a run that finished.")
+        return
+    spec = _shipped_spec()
+    was = _csv_cycles(_profile_csv(spec)) if spec else {}
+    print(f'{"id":>2} {"operator":<9} {"kernel op":<14} {"cycles":>11} {"ms":>8}'
+          + (f' {"shipped":>11} {"diff":>8}' if was else ""))
+    for r in rows:
+        line = (f'{r["dispatch_id"]:>2} {r["name"]:<9} {r["op"]:<14} '
+                f'{r["cycles"]:>11,} {r["cycles"] / PROFILE_CLOCK_MHZ / 1000:>8.2f}')
+        old = was.get(r["dispatch_id"])
+        if old:
+            line += f' {old:>11,} {100.0 * (r["cycles"] - old) / old:>+7.2f}%'
+        print(line)
+    total = sum(r["cycles"] for r in rows)
+    line = (f'{"":>2} {"total":<9} {"":<14} {total:>11,} '
+            f'{total / PROFILE_CLOCK_MHZ / 1000:>8.2f}')
+    old_total = sum(was.get(r["dispatch_id"], 0) for r in rows)
+    if old_total:
+        line += f' {old_total:>11,} {100.0 * (total - old_total) / old_total:>+7.2f}%'
+    print(line)
+
+
+def _profile_block(rows: list[dict], net: str) -> str:
+    """The rows in the shape the profile converter reads: one CSV block between markers."""
+    out = [f"=== MODELBLASTER_PROFILE_BEGIN [{net}] ===",
+           "dispatch_id,name,op,shape,cycles"]
+    out += [f'{r["dispatch_id"]},{r["name"]},{r["op"]},{r["shape"]},{r["cycles"]}'
+            for r in rows]
+    out.append(f"=== MODELBLASTER_PROFILE_END [{net}] ===")
+    return "\n".join(out) + "\n"
+
+
+#: Relative to a ModelBlaster checkout: the module the profile converter imports. Its
+#: presence is what makes a candidate directory the right one -- a checkout that carries
+#: the tree but not this file is the shape a partial copy has.
+_MB_PROBE = Path("modelblaster") / "pipeline" / "profile_writer.py"
+
+
+def _modelblaster_root() -> Path | None:
+    """The ModelBlaster checkout whose profile writer the converter imports.
+
+    The source checkout comes first: it is the tree this notebook points at everywhere
+    else, so the converter reads the same ModelBlaster the attendee can open. `ZCS`
+    overrides it where something has been staged deliberately.
+    """
+    repo = repo_root()
+    cands = [os.environ.get("ZCS"),
+             str(repo / "zephyr-chipyard-sw") if repo else "",
+             str(Path.home() / "tut" / "zephyr-chipyard-sw"),
+             str(Path.home() / "mb-tools" / "zephyr-chipyard-sw")]
+    for cand in cands:
+        if cand and (Path(cand) / _MB_PROBE).exists():
+            return Path(cand)
+    return None
+
+
+def write_measured_profile(rows: list[dict], clock_mhz: float = PROFILE_CLOCK_MHZ) -> Path | None:
+    """Convert the board's rows into a profile tree, and write the spec that reads it.
+
+    The scheduler reads per-dispatch costs as a results.csv under a tree named by
+    backend, target, model and core topology; `scripts/uartlog_to_profile.py` is the
+    converter that writes one. Everything else in the workload is reused unchanged --
+    the dispatch graph, the periods, the second machine's file -- so the only difference
+    between this solve and 5.1's is which cycle counts the costs came from.
+
+    Returns the workload spec to solve, or None with the reason printed.
+    """
+    if not rows:
+        print("Nothing to convert: the console carried no per-dispatch rows.")
+        return None
+    root, py, mb = xpurt_root(), xpurt_python(), _modelblaster_root()
+    if root is None:
+        print("Not written: no XPU-RT checkout on this machine, so there is no profile "
+              "tree to write into and no converter to write it.")
+        return None
+    if py is None:
+        print("Not written: no interpreter with ortools on this machine.")
+        return None
+    if mb is None:
+        print("Not written: the ModelBlaster checkout the converter imports its profile "
+              "writer from is not on this machine.")
+        return None
+    spec = _shipped_spec()
+    if spec is None:
+        print(f"Not written: this XPU-RT checkout does not carry {SHIPPED_SPEC}, so there "
+              "is no workload to re-cost.")
+        return None
+    net = next(iter(spec["networks"]))
+    prof = spec["hardware"]["profile"]
+    fast, engine = spec["hardware"]["profile_hw"]["cpu_p"], spec["hardware"]["profile_hw"]["cpu_e"]
+
+    MEASURED_DIR.mkdir(parents=True, exist_ok=True)
+    block = MEASURED_DIR / "board.profile"
+    block.write_text(_profile_block(rows, net))
+    out_root = MEASURED_DIR / "profile"
+
+    r = sh(f"cd {root} && PYTHONPATH={mb} {py} scripts/uartlog_to_profile.py "
+           f"--uartlog {block} --model {net} --quant int8 --backend {fast} "
+           f"--cpu {prof['target']} --source board --cores 0 "
+           f"--clock-mhz {clock_mhz:g} --out-root {out_root} --tag {net}",
+           timeout=300, quiet=True)
+    if r.returncode != 0:
+        print(r.stdout.strip()[-600:])
+        print("The converter did not write a profile.")
+        return None
+    print(r.stdout.strip())
+
+    # The second machine's file is copied, not measured: it records that no kernel for
+    # these operators exists for that machine, which no board run can discover.
+    shipped_engine = _profile_csv(spec, "cpu_e")
+    if shipped_engine is None:
+        print(f"Not written: the shipped tree has no {engine} file to carry over.")
+        return None
+    dst = (out_root / engine / prof["target"] / net / f"{net}.int8"
+           / prof.get("topo_tag", "topo_0") / "results.csv")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() or dst.is_symlink():
+        dst.unlink()
+    dst.symlink_to(shipped_engine)
+    print(f"  carried over {engine} unchanged: {dst}")
+
+    # The spec: the measured tree replaces the profile tree, and the dispatch graph is
+    # named absolutely because it stays in the checkout the graph was generated in.
+    spec["hardware"]["profile"]["gen_root"] = str(MEASURED_DIR)
+    for info in spec["networks"].values():
+        deps = info.get("dispatch_deps_path", "")
+        if deps and not os.path.isabs(deps):
+            info["dispatch_deps_path"] = str(root / deps)
+    path = MEASURED_DIR / MEASURED_SPEC
+    path.write_text(json.dumps(spec, indent=2))
+    print(f"  workload to solve: {path}")
+    return path
+
+
+def compare_measured_makespan() -> None:
+    """The shipped schedule's duration beside the one your board's costs produced."""
+    shipped, mine = _shipped_spec(), None
+    path = MEASURED_DIR / MEASURED_SPEC
+    if path.exists():
+        mine = json.loads(path.read_text())
+    if shipped is None or mine is None:
+        print("No measured solve to compare -- the cells above did not produce one.")
+        return
+    was = sum(_csv_cycles(_profile_csv(shipped)).values())
+    now = sum(_csv_cycles(_profile_csv(mine)).values())
+    try:
+        a, b = solved_metrics(XPURT_SCHEDULE), solved_metrics(MEASURED_SCHEDULE)
+    except (FileNotFoundError, OSError) as exc:
+        print(f"One of the two solves has written no metrics file yet ({exc}). Run 5.1's "
+              "cell and the solve above, then this one.")
+        return
+    print(f'{"shipped profile":<18} makespan_us {a["makespan_us"]:>7.2f}   '
+          f'{was:>11,} cycles   op_deadline_miss {a["op_deadline_miss_count"]}')
+    print(f'{"your board":<18} makespan_us {b["makespan_us"]:>7.2f}   '
+          f'{now:>11,} cycles   op_deadline_miss {b["op_deadline_miss_count"]}')
+    if was:
+        print(f'\nYour board ran the frame in {now - was:+,} cycles, '
+              f'{100.0 * (now - was) / was:+.3f}% of the recorded frame.')

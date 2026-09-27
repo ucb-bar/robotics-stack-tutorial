@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-27T09:53:36Z",
+  "generated_at": "2026-09-27T10:33:01Z",
   "generated_by": "content_validate.py",
-  "source_commit": "055fe66bfd2e26e0ddda68ca618bb56cd2ab1d5a+working-tree",
-  "note": "Unit 4: wait for the board",
+  "source_commit": "87e0daae10f1",
+  "note": "Unit 3 decodes your own capture; Unit 5 measures your board; Unit 4 readers explain a missing run",
   "files": [
     {
       "path": "work/.backend/ospi-camera/README.md",
@@ -152,8 +152,8 @@
     },
     {
       "path": "work/README.md",
-      "bytes": 9310,
-      "sha256": "cd93166fdcbe1ac05b720db951eb05f49a0689d8f860e96fe52769a9d80a72a8"
+      "bytes": 9104,
+      "sha256": "c2af96f377db7292085df5c8fdc25980347188c240e5c967f8bfa530a0e69f9c"
     },
     {
       "path": "work/assets/kernel_gate.expected.txt",
@@ -164,11 +164,6 @@
       "path": "work/assets/lane_timeline.json",
       "bytes": 9076,
       "sha256": "df256ced2f259fc2cf833e503edba402458f475a65ddce34d97e67803bb1166a"
-    },
-    {
-      "path": "work/assets/mb_recorded_runs.tar.gz",
-      "bytes": 151218,
-      "sha256": "67b625fb866ef8b31de346bc790414b73a0c3a7296b1a11fa1fd9875001a4cee"
     },
     {
       "path": "work/assets/moonshine_shape.json",
@@ -191,17 +186,22 @@
       "sha256": "b2cdb70a4c49a81c63d8e88229fac5ddde07b35a4fcfabefca76b19677fb9c79"
     },
     {
+      "path": "work/assets/signdet_profile.bin",
+      "bytes": 149004,
+      "sha256": "04a58da62b14e08e63886f2d45b4c6730bf19c60a25d882514523c16aaa097c8"
+    },
+    {
       "path": "work/iiswc_lab.py",
-      "bytes": 95488,
-      "sha256": "02ec9f70d8dd4ded24907add102ce75e046fafd4067ed8c53ba312081d4a2df9"
+      "bytes": 115666,
+      "sha256": "671fc367b76fbfe456522385cf3c5cd9fc6c8fd1ec6b45906498ce520ac81927"
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 112581,
-      "sha256": "d6e8d0d019b8d6447095eeebe4764e0130d756928e6acec47b425a032d2df816",
-      "cells": 164,
+      "bytes": 123723,
+      "sha256": "114db6b9af1134b56c629b4579a2d72e3188dffd49a73cc27b9be51c0d14fc8f",
+      "cells": 178,
       "nbformat": 4,
-      "source_chars": 78762,
+      "source_chars": 87099,
       "schema_checked": true
     },
     {
@@ -211,14 +211,14 @@
     },
     {
       "path": "work/tools/build_notebook.py",
-      "bytes": 88152,
-      "sha256": "1442cb4c35911f6ef1006dd262f32572859a92d6a1e21e7fd8190b091ab404b3"
+      "bytes": 96722,
+      "sha256": "f49d1f0f1beadca056203ee5660d9109b925efa25cb3b29bd47fea8651d59c24"
     }
   ],
   "repo": {
     "url": "https://github.com/ucb-bar/robotics-stack-tutorial.git",
     "ref": "main",
-    "commit": "b7f703cef79e8067c1b6fddf876085a4d9d4326b",
+    "commit": "4fbec0cd35a2cb23d9ebfbc6df681997b4d2c7b6",
     "mount": "repo",
     "guide": [
       [

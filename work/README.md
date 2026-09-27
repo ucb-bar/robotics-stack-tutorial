@@ -39,8 +39,7 @@ not something to quietly paper over in the notebook.
 | `tools/build_notebook.py` | the source of the notebook. Edit this, re-run it, commit both. |
 | `iiswc_lab.py` | the helpers the notebook imports. Must sit beside the notebook. |
 | `assets/` | anything pre-seeded so an attendee never watches a cold build. |
-| `mb_progress.py` | a copy of the lab's `scripts/lib/mb_progress.py`, which Unit 4's helpers use to chart a run when the repository is not on the instance. |
-| `assets/mb_recorded_runs.tar.gz` | two finished Unit 4 runs measured on a board (a live optimization and a `mb try`), which Unit 4 reads when the seat cannot run the optimizer. |
+| `mb_lab/` | the ModelBlaster + LLM lab (`docs/MB_ATTENDEE.md`): two generated notebooks, their helpers and tools. See its README. |
 
 `board_link.py` must be on one of the paths `iiswc_lab._board_link()` searches, and the
 key it uses (`~/.ssh/iiswc-board-agent`, or `$IISWC_BOARD_KEY`) must be present. Neither
