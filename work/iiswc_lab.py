@@ -24,6 +24,7 @@ import os
 import shlex
 import socket
 import subprocess
+import threading
 import sys
 import time
 from dataclasses import dataclass
@@ -311,6 +312,163 @@ def board_put(path: str | Path, name: str | None = None, verbose: bool = True) -
     if verbose:
         print(repr(r))
     return r
+
+
+# --------------------------------------------------------------------------------------
+# Putting a RE-TUNED guest on the card without sending the guest.
+#
+# The speech guest is 63.76 MiB because every weight is inside it. Thirty seats pushing one
+# each is ~1,912 MiB, about eight minutes of the room's whole channel at the 4.021 MiB/s the
+# fleet measured -- so a fleet-wide guest update is not something a tutorial can spend.
+#
+# But two builds of the same sample are 99.6 % the same bytes (L413), and the difference is
+# the code that changed plus the pointer tables holding its addresses. So the cell sends the
+# difference: a ~257 KB patch that the card rebuilds the image from and verifies before
+# anything boots it. One named call, because every step of it is a place to get a digest
+# wrong, and a cell that gets a digest wrong looks exactly like a cell that worked.
+# --------------------------------------------------------------------------------------
+def board_guest_delta(base_image: str | Path, new_image: str | Path, base: str = "staged",
+                      patch_name: str = "guest.zpatch", work: str | Path | None = None,
+                      verbose: bool = True) -> dict:
+    """How few bytes it takes to put a re-tuned guest on your card -- and the md5 that proves
+    the card rebuilt exactly the image you built here.
+
+    `base_image` is your local copy of the guest the card is already holding, `new_image` is
+    the one you just built, and `base` names which pre-staged guest on the card to rebuild
+    from (`speech`, `signdet`, `boot_info`, `cam_snap`, or `staged` for one you pushed with
+    `lab.board_put(..., "base.bin")`).
+
+    It REFUSES before building anything if the card's base is not byte-identical to yours.
+    That refusal is the whole safety property: a delta against the wrong base reconstructs
+    nothing, while looking entirely healthy right up to the digest that catches it. There is
+    no flag to skip it.
+
+    Returns a dict of the measured numbers -- `patch_bytes`, `push_s`, `apply_s`,
+    `result_md5`, `identical` -- so the cell after it can assert on them instead of on
+    scrollback.
+    """
+    base_image, new_image = Path(base_image), Path(new_image)
+    out: dict = {"base": base, "identical": False}
+
+    tool = repo_file("fpga/pynq-z2/host/guest_delta.py")
+    if tool is None:
+        print("guest_delta.py is not in any checkout on this instance, so no delta can be "
+              "built here. Nothing was sent. (fpga/pynq-z2/host/guest_delta.py)")
+        return out
+    for p in (base_image, new_image):
+        if not p.is_file():
+            print(f"{p} is not a file, so there is nothing to diff. Nothing was sent.")
+            return out
+
+    link = _board_link()
+    if link is None:
+        print("STUB: board_link.py is not on this instance. No delta was built and nothing "
+              "was sent to any card.")
+        return out
+    if not link.probe()["connected"]:
+        print("board offline. No delta was built and nothing was sent.")
+        return out
+
+    # (1) WHAT THE CARD IS ACTUALLY HOLDING.  Asked, not assumed -- and asked BEFORE the four
+    # seconds of diffing, so a mismatch costs a round trip instead of a patch nobody can use.
+    try:
+        on_card = link.base_md5(base)
+    except Exception as exc:                       # noqa: BLE001 - a status line, not a trace
+        print(f"could not ask the card what it holds: {type(exc).__name__}: {exc}")
+        return out
+    mine = _md5_file(base_image)
+    out["card_base_md5"], out["local_base_md5"] = on_card, mine
+    if on_card is None:
+        print(f"this card carries no '{base}' base, so there is nothing to rebuild from.\n"
+              f"  Push one first:  lab.board_put({base_image.name!r}, 'base.bin')  "
+              f"then use base='staged'.")
+        return out
+    if on_card != mine:
+        print(f"REFUSING to build a delta.\n"
+              f"  the card's '{base}' base is md5 {on_card}\n"
+              f"  {base_image.name} here is md5 {mine}\n"
+              f"  A patch only reconstructs the image it was computed against. Point\n"
+              f"  base_image at what the card has, or push the new guest whole.")
+        return out
+
+    # (2) THE PATCH.  --card-base-md5 makes the tool refuse the same mismatch independently;
+    # the check above is so the message is a sentence rather than a traceback.
+    work = Path(work) if work else (new_image.parent / "delta")
+    work.mkdir(parents=True, exist_ok=True)
+    patch = work / patch_name
+    t0 = time.time()
+    made = sh(f"{shlex.quote(sys.executable)} {shlex.quote(str(tool))} make "
+              f"{shlex.quote(str(base_image))} {shlex.quote(str(new_image))} "
+              f"-o {shlex.quote(str(patch))} "
+              f"--manifest {shlex.quote(str(patch.with_suffix('.json')))} "
+              f"--card-base-md5 {mine} --json", quiet=True)
+    out["make_s"] = round(time.time() - t0, 2)
+    if made.returncode != 0 or not patch.is_file():
+        # `sh()` merges stderr into stdout, so the tool's refusal is in there and there is no
+        # `.stderr` to read -- an earlier draft of this helper reached for one and would have
+        # turned a clear refusal into an AttributeError two frames down.
+        print(f"the delta could not be built:\n{made.stdout.strip()}")
+        return out
+    out["manifest"] = {}
+    for line in reversed(made.stdout.strip().splitlines()):
+        if line.startswith("{"):
+            try:
+                out["manifest"] = json.loads(line)
+            except ValueError:
+                pass
+            break
+    out["patch_bytes"] = patch.stat().st_size
+    out["image_bytes"] = new_image.stat().st_size
+    out["result_md5"] = _md5_file(new_image)
+    out["shrink"] = round(out["image_bytes"] / max(out["patch_bytes"], 1), 1)
+
+    # (3) THE PUSH, timed -- because "how much of the room's channel did this cost" is the
+    # question the whole mechanism exists to answer.
+    t0 = time.time()
+    try:
+        out["put"] = link.put_file(str(patch), patch_name)
+    except Exception as exc:                       # noqa: BLE001
+        print(f"the card refused the patch upload: {type(exc).__name__}: {exc}")
+        return out
+    out["push_s"] = round(time.time() - t0, 2)
+
+    # (4) THE REBUILD.  The card verifies the base, rebuilds, verifies the result, and only
+    # then lets it become zephyr.bin. A failure here leaves the guest the card had.
+    t0 = time.time()
+    try:
+        reply = link.patch(patch_name, base, out["result_md5"])
+    except Exception as exc:                       # noqa: BLE001
+        print(f"the card did not install the rebuild: {type(exc).__name__}: {exc}\n"
+              f"  Its previous guest is untouched. `lab.board('get', 'patch.log')` says why.")
+        out["apply_s"] = round(time.time() - t0, 2)
+        return out
+    out["apply_s"] = round(time.time() - t0, 2)
+    out["reply"] = reply
+    out["identical"] = reply.get("md5") == out["result_md5"]
+
+    if verbose:
+        print(f"base on card   {on_card}  ({base})")
+        print(f"image          {out['image_bytes']:,} B   {out['result_md5']}")
+        print(f"patch          {out['patch_bytes']:,} B   {out['shrink']}x smaller, "
+              f"built in {out['make_s']}s")
+        print(f"pushed         {out['push_s']}s")
+        print(f"rebuilt        {out['apply_s']}s on the card "
+              f"({reply.get('apply_s', '?')}s of it inside the applier)")
+        print(f"card's md5     {reply.get('md5')}")
+        print("VERIFIED: the card's guest is byte-identical to the image built here"
+              if out["identical"] else
+              "NOT IDENTICAL -- the card refused to install it, and said so above")
+    return out
+
+
+def _md5_file(path: str | Path, chunk: int = 1 << 20) -> str:
+    """The md5 of a file, read in chunks so a 64 MB image never lands in RAM whole."""
+    import hashlib
+    h = hashlib.md5()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 # --------------------------------------------------------------------------------------
@@ -698,6 +856,70 @@ def _summarise_timeline(merged: Path, trace_label: str) -> dict:
         "ends_together_pct": (100.0 * apart / span) if span else 0.0,
         "gates": {"busy_ok": busy_ok, "ends_together_ok": together_ok, "failures": failures},
     }
+
+
+DEMO_STEPS = ("speech", "speech_small", "signdet")
+_demo_thread = None
+_demo_result: dict = {}
+
+
+def start_demo(step: str = "signdet") -> None:
+    """Start a demo on the board and return at once, leaving it running.
+
+    THE BOARD DOES NOT STOP WHEN THIS CELL DOES. The card loads the guest, releases the
+    core and reads the console for a short while; when that read ends it stops READING and
+    never resets the SoC. The guest keeps running, so the board goes on demonstrating until
+    something else is loaded onto it -- another cell, or a restart.
+
+    That is why this does not wait. A cell that blocked for the length of the demo made the
+    attendee watch a progress bar instead of the board, and the interesting moment usually
+    happened while they were looking at the wrong thing.
+    """
+    global _demo_thread
+    if step not in DEMO_STEPS:
+        raise ValueError(f"unknown demo {step!r}; choose one of {', '.join(DEMO_STEPS)}")
+    if _demo_thread is not None and _demo_thread.is_alive():
+        print("a demo is already starting on your board -- wait for it to report, then run this again")
+        return
+
+    def _go():
+        try:
+            r = board("run", step, timeout=300, verbose=False)
+            _demo_result[step] = r
+        except Exception as exc:                     # noqa: BLE001 -- reported, not raised
+            _demo_result[step] = exc
+
+    _demo_result.pop(step, None)
+    _demo_thread = threading.Thread(target=_go, name=f"demo-{step}", daemon=True)
+    _demo_thread.start()
+    print(f"{step} is starting on your board. Watch the board, not this cell.")
+    print("It keeps running until you load something else onto the card.")
+
+
+def show_demo(step: str = "signdet", *tags: str) -> None:
+    """What the board printed while it was starting, once the card has reported back.
+
+    The demo is still running when this prints: these are the first seconds of console, kept
+    so the start can be checked without watching the glass.
+    """
+    if _demo_thread is not None and _demo_thread.is_alive():
+        print("still starting -- run this cell again in a few seconds")
+        return
+    r = _demo_result.get(step)
+    if r is None:
+        print(f"no start recorded for {step!r} in this kernel -- run lab.start_demo({step!r}) first")
+        return
+    if isinstance(r, Exception):
+        print(f"the start failed: {type(r).__name__}: {r}")
+        return
+    if not r.ok:
+        print(f"the card did not start it: {(r.note or str(r))[:200]}")
+        return
+    c = board("get", "console.out", binary=True, verbose=False)
+    if not c.ok:
+        print("the board is running, but its console could not be read back")
+        return
+    show_console_lines(console_text(c), *(tags or ("SD_BOOT", "SD_CAM", "SD_FRAME", "SD_RESULT")))
 
 
 def decode_capture(lanes: list[Path] | list[str], elf: str | Path,
@@ -1849,10 +2071,8 @@ XPURT_PROFILE = Path("/etc/profile.d/xpurt.sh")
 
 #: The schedule 5.1 solves. XPU-RT names every artifact after the networks file it was
 #: given, so this one name fixes both the metrics file and the plot.
-XPURT_SCHEDULE = "networks_b154_gate_cpsat_profiled"
+XPURT_SCHEDULE = "networks_pynqz1_enc_w20_cpsat_profiled"
 
-#: The recorded 44-cell sweep 5.3 reads instead of re-solving.
-SWEEP_GOLDEN = "expected/xpurt_coloc2m_b157.json"
 
 
 def _xpurt_exports() -> dict:
@@ -1929,129 +2149,6 @@ def schedule_plot(name: str = XPURT_SCHEDULE):
     return Image(filename=str(root / "plots" / f"{name}.png"))
 
 
-def schedule_sweep(rel: str = SWEEP_GOLDEN) -> dict:
-    """The recorded co-location sweep: all 44 cells, the refusals and the compaction table.
-
-    Reading it is what makes 5.3 need no solver, no XPU-RT and no artifacts.
-    """
-    path = repo_file(rel)
-    if path is None:
-        raise SystemExit(f"This checkout does not ship {rel} -- the recorded sweep lives "
-                         "in the curated tree the seats carry.")
-    return json.loads(path.read_text())
-
-
-def show_headline_schedules(sweep: dict) -> None:
-    """Where each scheduler lands Moonshine, and whether the detector still made its frames."""
-    for name, cell in sweep["headline_cells"].items():
-        if name.startswith("_"):
-            continue
-        print(f'{name:<32} {cell["moonshine_end_ms"]:>9,.2f} ms   '
-              f'windows {cell["windows_landed"]:<6} '
-              f'{"PASSES" if cell["real_time_ok"] else "FAILS"}')
-    print()
-    print("cells", sweep["totals"]["cells"], "| dispatches per schedule",
-          f'{sweep["totals"]["dispatches_per_schedule"]:,}',
-          "| machine overlaps", sweep["totals"]["machine_overlaps"])
-
-
-def show_compaction(sweep: dict, rows: int = 4) -> None:
-    """What the left-shift pass recovered, and how many dispatches it had to move."""
-    for c in sweep["compaction"][:rows]:
-        print(f'{plain_name(c["scheduler"]):<22} {c["contention"]:<5} '
-              f'{c["recovered_ms"]:>10,.3f} ms  {c["dispatches_moved"]:>5,} moved  '
-              f'{c["result"]}')
-    print()
-
-
-def show_refused_cells(sweep: dict) -> None:
-    """The cells whose makespan is withheld, and the violation that withheld it."""
-    print(f'{len(sweep["refused"])} cells were REFUSED, not reported:')
-    for r in sweep["refused"]:
-        print(f'  {plain_name(r["scheduler"])} {r["contention"]}/{r["compaction"]}: '
-              f'{r["exclusion_violations"]} exclusion violations, '
-              f'withheld makespan {r["withheld_makespan_ms"]:,.2f} ms')
-
-
-def golden_row(sweep: dict, policy: str = "fifo", contention: str = "none",
-               compaction: str = "plain") -> dict:
-    """The recorded row for one cell of the sweep, to check a live solve against."""
-    return next(r for r in sweep["rows"] if r["policy"] == policy
-                and r["contention"] == contention and r["compaction"] == compaction)
-
-
-def run_sweep_cell(policy: str = "fifo", contention: str = "none",
-                   compaction: str = "plain") -> Path | None:
-    """Run one cell of the co-location sweep, and say what it produced.
-
-    Four things have to be present and they fail separately, so each one is named rather
-    than collapsed into "not provisioned": the sweep script, an XPU-RT tree, an
-    interpreter with ortools, and a tree whose revision can be checked against the pin
-    every number in the recorded sweep was produced with.
-
-    Returns the cell's own directory -- the symlink farm the sweep solves inside -- when
-    there is one, so the next step can solve in it.
-    """
-    script = repo_file("scripts/12_xpurt_coloc_sweep.sh")
-    if script is None:
-        print("Not run: this checkout does not ship the sweep script. "
-              "The recorded sweep above carries the whole result.")
-        return None
-    root, py = xpurt_root(), xpurt_python()
-    if root is None:
-        print("Not run: no XPU-RT checkout on this machine. Clone XPU-RT and set "
-              "XPURT_ROOT to it.")
-        return None
-    if py is None:
-        print("Not run: no interpreter with ortools on this machine. Set XPURT_PY to one.")
-        return None
-    if not (root / ".git").exists() and os.environ.get("XPURT_ALLOW_ANY_REV") != "1":
-        print(f"Not run: {root} has no git history, and the sweep checks XPU-RT against a\n"
-              f"         pinned revision before it solves anything -- a number from another\n"
-              f"         revision is not the one the recorded sweep holds. A clone of XPU-RT\n"
-              f"         at that revision runs this cell.")
-        return None
-    repo = script.parent.parent
-    sh(f"cd {repo} && XPURT_ROOT={root} XPURT_PY={py} STAGE=heur POLICIES={policy} "
-       f"CONT_ARMS={contention} COMPACT_ARMS={compaction} JOBS=1 {script}",
-       timeout=900, quiet=True)
-    out = repo / "out" / "b157"
-    wrote = sorted((out / "schedules" / contention / compaction).glob("*_metrics.json"))
-    farm = out / "work" / f"{policy}_{contention}_{compaction}"
-    print("the sweep produced a schedule" if wrote else
-          "the sweep produced NO schedule -- the base-path trap above. "
-          "The next cell runs the same solve the way that works.")
-    return farm if farm.is_dir() else None
-
-
-def solve_in_sweep_cell(farm: Path | None, sweep: dict, policy: str = "fifo",
-                        contention: str = "none", compaction: str = "plain") -> None:
-    """Solve the same cell from inside its own farm, and check it against the recorded row.
-
-    `run_xpurt_schedule.py` takes its base path from where the script itself sits, so
-    naming the copy inside the farm is the whole difference: the data is in the farm.
-    """
-    if farm is None or not Path(farm).is_dir():
-        print("No cell farm to run in -- the recorded sweep above carries the result "
-              "without it.")
-        return
-    spec = repo_file("fpga/pynq-z2/xpurt/networks_pynqz1_coloc2m_sdp_b4_T1000.json")
-    inject = repo_file("scripts/lib/b157_inject")
-    py = xpurt_python()
-    if not (spec and inject and py):
-        print("No spec, path shim or ortools interpreter on this machine -- nothing was run.")
-        return
-    r = sh(f"cd {farm} && env -u XPURT_NO_COMPACT -u XPURT_COMPACT "
-           f"PYTHONPATH={inject} XPURT_CPSAT_PYTHON={py} XPURT_CPSAT_WORKERS=1 "
-           f"{py} {farm}/scripts/run_xpurt_schedule.py "
-           f"--networks-json {spec} --scheduler {policy} --profiled",
-           timeout=900, quiet=True)
-    for line in r.stdout.splitlines():
-        if "makespan_us" in line:
-            print(line.strip())
-    row = golden_row(sweep, policy, contention, compaction)
-    print(f'golden says moonshine_end_ms={row["moonshine_end_ms"]}, '
-          f'late_detector_dispatches={row["late_detector_dispatches"]}')
 
 
 # --------------------------------------------------------------------------------------
@@ -2066,7 +2163,6 @@ def solve_in_sweep_cell(farm: Path | None, sweep: dict, policy: str = "fifo",
 INK, INK2, GRID = "#0b0b0b", "#52514e", "#dddcd8"
 S1, S2 = "#2a78d6", "#eb6834"          # slot 1, slot 2
 GOOD, BAD = "#0ca30c", "#d03b3b"       # status, never alone
-REFERENCE_MS = 4000.0
 
 
 def _axes_style(ax):
@@ -2078,93 +2174,6 @@ def _axes_style(ax):
     ax.tick_params(colors=INK2, labelsize=8, length=3)
     ax.grid(axis="x", color=GRID, lw=0.6, zorder=0)
     ax.set_axisbelow(True)
-
-
-def schedule_comparison_figure(golden: dict):
-    """The schedule result, drawn from the committed golden -- no solve, no artifacts.
-
-    Two panels on ONE shared millisecond axis:
-      * what the compaction post-pass moves on the two CP-SAT arms;
-      * where all 36 heuristic cells land, and that none clears both objectives.
-    """
-    import matplotlib.pyplot as plt
-
-    h, rows = golden["headline_cells"], golden["rows"]
-    fig, (a, b) = plt.subplots(2, 1, figsize=(9.6, 6.0), sharex=True,
-                               gridspec_kw={"height_ratios": [1.0, 1.0]})
-
-    # -- panel A: plain -> compact ---------------------------------------------------
-    arms = [("dram\nmeasured DRAM contention", h["cpsat_dram_plain"], h["cpsat_dram_compact"]),
-            ("none\nuncontended", h["cpsat_none_plain"], h["cpsat_none_compact"])]
-    for i, (label, plain, compact) in enumerate(arms):
-        x0, x1 = plain["moonshine_end_ms"], compact["moonshine_end_ms"]
-        a.plot([x1, x0], [i, i], color=INK2, lw=2, zorder=2, solid_capstyle="round")
-        a.plot([x0], [i], "o", ms=10, color=S1, zorder=3,
-               label="no compaction" if i == 0 else None)
-        a.plot([x1], [i], "o", ms=10, color=S2, zorder=3,
-               label="XPURT_COMPACT=1" if i == 0 else None)
-        for x, cell in ((x0, plain), (x1, compact)):
-            ok = cell["real_time_ok"]
-            a.annotate(f"{x:,.0f}", (x, i), textcoords="offset points", xytext=(0, 13),
-                       ha="center", fontsize=8.5, color=INK, weight="bold")
-            a.annotate("PASSES" if ok else "FAILS", (x, i), textcoords="offset points",
-                       xytext=(0, -20), ha="center", fontsize=7.5,
-                       color=GOOD if ok else BAD, weight="bold")
-        a.annotate(f"{x0 - x1:,.2f} ms recovered,\nno window traded",
-                   ((x0 + x1) / 2, i), textcoords="offset points", xytext=(0, -42),
-                   ha="center", fontsize=7.5, color=INK2)
-    a.set_yticks(range(len(arms)))
-    a.set_yticklabels([lbl for lbl, _, _ in arms], fontsize=8.5)
-    a.set_ylim(-0.75, len(arms) - 0.25)
-    a.set_title("Compaction is what crosses the window  ·  CP-SAT, all four detector "
-                "windows land in every cell here",
-                fontsize=10, color=INK, loc="left", pad=22)
-    a.legend(frameon=False, fontsize=8, loc="upper left",
-             bbox_to_anchor=(0.0, 1.16), ncols=2)
-    _axes_style(a)
-
-    # -- panel B: every heuristic cell ------------------------------------------------
-    heur = [r for r in rows if r["policy"] not in ("cpsat", "cpsat_warmbest_b157")
-            and r["compaction"] == "plain"]
-    land = [r for r in heur if len(r["windows_landed"].strip("-")) == 4]
-    miss = [r for r in heur if r not in land]
-    b.plot([r["moonshine_end_ms"] for r in miss], [0.3] * len(miss), "o", ms=7,
-           color=S1, alpha=0.6, zorder=3, label=f"misses a window  ({len(miss)} cells)")
-    b.plot([r["moonshine_end_ms"] for r in land], [-0.3] * len(land), "o", ms=7,
-           color=S2, zorder=3, label=f"lands all four  ({len(land)} cells)")
-    best = min(heur, key=lambda r: r["moonshine_end_ms"])
-    b.annotate(f"fastest heuristic {best['moonshine_end_ms']:,.0f} ms ({best['policy']})\n"
-               f"and it lands only {len(best['windows_landed'].strip('-'))} of 4 windows",
-               (best["moonshine_end_ms"], 0.3), textcoords="offset points",
-               xytext=(0, 16), ha="left", fontsize=7.5, color=INK)
-    if land:
-        edf = min(land, key=lambda r: r["moonshine_end_ms"])
-        b.annotate(f"{edf['policy']} lands all four, at {edf['moonshine_end_ms']:,.0f} ms\n"
-                   f"{edf['moonshine_end_ms'] - REFERENCE_MS:,.0f} ms past the reference",
-                   (edf["moonshine_end_ms"], -0.3), textcoords="offset points",
-                   xytext=(0, -34), ha="center", fontsize=7.5, color=INK)
-    b.set_yticks([])
-    b.set_ylim(-1.0, 1.0)
-    b.set_xlabel("Moonshine end (ms) — lower is better", fontsize=8.5, color=INK2)
-    b.set_title(f"No heuristic clears both objectives  ·  {len(heur)} cells "
-                "(compaction moves 0 dispatches on all nine, so only the plain arm is drawn)",
-                fontsize=9.2, color=INK, loc="left", pad=22)
-    b.legend(frameon=False, fontsize=8, loc="upper left",
-             bbox_to_anchor=(0.0, 1.16), ncols=2)
-    _axes_style(b)
-
-    lo = min(r["moonshine_end_ms"] for r in rows) - 500
-    hi = max(r["moonshine_end_ms"] for r in rows) + 500
-    b.set_xlim(lo, hi)
-    for ax in (a, b):
-        ax.axvline(REFERENCE_MS, color=BAD, lw=1.4, ls=(0, (5, 3)), zorder=1)
-    b.annotate("4,000 ms reference\n(RTF 1 on a 4 s utterance)", (REFERENCE_MS, 0.97),
-               xycoords=("data", "axes fraction"), textcoords="offset points",
-               xytext=(-8, 0), ha="right", va="top", fontsize=7.5, color=BAD)
-    fig.tight_layout()
-    plt.close(fig)   # the inline backend auto-shows a live figure, and
-                     # returning it renders a second copy
-    return fig
 
 
 def lane_timeline_figure(lanes: dict):
@@ -2559,3 +2568,649 @@ def compare_measured_makespan() -> None:
     if was:
         print(f'\nYour board ran the frame in {now - was:+,} cycles, '
               f'{100.0 * (now - was) / was:+.3f}% of the recorded frame.')
+# --------------------------------------------------------------------------------------
+# Running a model on the card and reading ModelBlaster's per-layer profile (Unit 2).
+#
+# ModelBlaster's profiling harness times every operator invocation separately. It reads the
+# cycle counter either side of each kernel call and prints one `MB_PEXT_OP` line per
+# dispatch, carrying the dispatch id, the operator's name in the model, the kernel op the
+# lowering bound to it, the tensor shape, and the cycles that invocation took. That is the
+# per-layer profile, and it comes off the board's console -- the same lines whichever model
+# the harness was built against.
+#
+# `measured_dispatch_rows` above parses those lines and is reused unchanged here. What this
+# section adds is the reading of them: which layer dominates, which core ran it, and a
+# figure that puts every dispatch's share of the frame in one picture.
+#
+# TWO CORES, AND ONLY ONE OF THEM NEEDS THE PROFILE TO SAY SO. The first core carries the
+# MBP instructions; the second carries a RoCC engine reached over a different custom opcode.
+# A kernel bound to the engine still has its cycles counted on the first core, because that
+# is where the dispatch is issued from and where it waits -- so an engine dispatch's cycle
+# count is its whole cost, hand-off and wait included, which is what a schedule needs. The
+# runtime prints a separate `MB_ROCCMOON` line saying how many dispatches actually reached
+# the engine and how many fell back, and that line is the one to read before believing a
+# kernel choice: a lowering can bind a kernel to the engine and the kernel can still decline
+# every shape it is handed.
+# --------------------------------------------------------------------------------------
+#: The speech image that profiles itself: Moonshine's encoder, lowered with the engine
+#: backend, timing every one of its dispatches.
+SPEECH_PROFILE_IMAGE = "speech_profile.bin"
+
+#: The operator kinds the RoCC engine on the second core has a kernel for. Everything else
+#: in a network runs on the first core, out of the MBP kernel library. A per-channel
+#: quantised convolution (`conv2d_s8_pc`) is deliberately not in this list: there is no
+#: engine kernel for it at all, which is why the detector runs entirely on the first core.
+ENGINE_OPS = ("conv2d_s8", "linear_s8")
+
+#: The console tag the engine runtime prints one of per phase, when it is linked in.
+_ENGINE_TAG = "MB_ROCCMOON "
+
+
+def speech_profile_image() -> Path:
+    """The speech profiling image to push to the card."""
+    path = Path(SPEECH_PROFILE_IMAGE)
+    return path if path.exists() else ASSETS / SPEECH_PROFILE_IMAGE
+
+
+def measured_engine_totals(console: str) -> dict:
+    """The engine runtime's own totals for the run, or `{}` if the engine was not linked.
+
+    The `total` phase is the one to read: the runtime prints a `warm` phase as well, whose
+    counters cover only the warm-up frame and are zero when there was none.
+    """
+    for line in console.splitlines():
+        line = line.strip()
+        if not line.startswith(_ENGINE_TAG):
+            continue
+        kv = dict(tok.split("=", 1) for tok in line[len(_ENGINE_TAG):].split()
+                  if "=" in tok)
+        if kv.get("phase") != "total":
+            continue
+        out = {}
+        for k, v in kv.items():
+            try:
+                out[k] = int(v)
+            except ValueError:
+                out[k] = v
+        return out
+    return {}
+
+
+def show_engine_totals(console: str) -> None:
+    """Where the dispatches actually ran: the engine's count, and what fell back."""
+    t = measured_engine_totals(console)
+    if not t:
+        print("No engine line on this console, so this image has no engine kernel bound in\n"
+              "it and every dispatch ran on the first core.")
+        return
+    served, fell = t.get("calls_engine", 0), t.get("calls_fallback", 0)
+    print(f'engine dispatches {served:,}   fell back to the first core {fell:,}')
+    if t.get("bytes_wgt"):
+        print(f'weights streamed into the engine {t["bytes_wgt"]:,} bytes in '
+              f'{t.get("loads_wgt", 0):,} loads')
+    if t.get("bytes_act"):
+        print(f'activations streamed in          {t["bytes_act"]:,} bytes in '
+              f'{t.get("loads_act", 0):,} loads')
+    if t.get("image_cycles"):
+        print(f'one-off weight image load        {t["image_cycles"]:,} cycles '
+              f'({t["image_cycles"] / PROFILE_CLOCK_MHZ / 1000:,.2f} ms), outside the frame')
+    if served == 0:
+        print("\nThe engine is linked in and served nothing: every kernel bound to it "
+              "declined\nthe shapes this model handed it.")
+
+
+def dispatch_shares(rows: list[dict], engine_ops: tuple = ENGINE_OPS) -> list[dict]:
+    """The rows with each dispatch's share of the model's total cycles added.
+
+    `pct` is that share, `where` names the core the kernel ran on, and the list comes back
+    in dispatch order -- the order the model executes in, which is the order a reader
+    follows a network in.
+    """
+    total = sum(r["cycles"] for r in rows) or 1
+    return [dict(r, pct=100.0 * r["cycles"] / total,
+                 where="engine" if r["op"] in engine_ops else "first core")
+            for r in sorted(rows, key=lambda r: r["dispatch_id"])]
+
+
+def show_dispatch_profile(rows: list[dict], top: int = 16,
+                          clock_mhz: float = PROFILE_CLOCK_MHZ,
+                          engine_ops: tuple = ENGINE_OPS) -> None:
+    """ModelBlaster's per-layer profile: one line per dispatch, with its share of the frame.
+
+    A detector has eight dispatches and every one of them fits on a screen. An encoder has
+    a hundred and twenty-nine, and a hundred and twenty-nine lines is not a profile anybody
+    reads -- so above `top` rows this prints the largest `top` by cycles, in dispatch order,
+    and collapses the rest into one line. The largest are what a reader is looking for: the
+    cost is never spread evenly.
+    """
+    if not rows:
+        print("No MB_PEXT_OP lines in that console, so nothing was timed. Check that the\n"
+              "board cells above reported a run that finished.")
+        return
+    shares = dispatch_shares(rows, engine_ops)
+    total = sum(r["cycles"] for r in shares)
+    keep = shares if len(shares) <= top else sorted(
+        sorted(shares, key=lambda r: -r["cycles"])[:top],
+        key=lambda r: r["dispatch_id"])
+    kept_ids = {r["dispatch_id"] for r in keep}
+    print(f'{"id":>4} {"operator":<30} {"kernel op":<14} {"cycles":>13} {"ms":>8} '
+          f'{"% of frame":>10}  ran on')
+    for r in keep:
+        print(f'{r["dispatch_id"]:>4} {r["name"][:30]:<30} {r["op"]:<14} '
+              f'{r["cycles"]:>13,} {r["cycles"] / clock_mhz / 1000:>8.2f} '
+              f'{r["pct"]:>9.2f}%  {r["where"]}')
+    rest = [r for r in shares if r["dispatch_id"] not in kept_ids]
+    if rest:
+        c = sum(r["cycles"] for r in rest)
+        print(f'{"":>4} {f"the other {len(rest)} dispatches":<30} {"":<14} '
+              f'{c:>13,} {c / clock_mhz / 1000:>8.2f} {100.0 * c / total:>9.2f}%')
+    print(f'{"":>4} {"whole frame":<30} {f"{len(shares)} dispatches":<14} '
+          f'{total:>13,} {total / clock_mhz / 1000:>8.2f} {100.0:>9.2f}%')
+
+
+def show_operator_rollup(rows: list[dict], clock_mhz: float = PROFILE_CLOCK_MHZ,
+                         engine_ops: tuple = ENGINE_OPS) -> None:
+    """The same profile summed by kernel op, largest first.
+
+    Per dispatch the profile says which layer is expensive. Summed by op it says which
+    *kind* of arithmetic the model spends its time in, which is the question a kernel author
+    asks: twenty-four cheap dispatches of one op can outweigh one expensive dispatch of
+    another.
+    """
+    if not rows:
+        print("Nothing to roll up: the console carried no per-dispatch rows.")
+        return
+    shares = dispatch_shares(rows, engine_ops)
+    total = sum(r["cycles"] for r in shares)
+    by: dict[str, dict] = {}
+    for r in shares:
+        e = by.setdefault(r["op"], {"n": 0, "cycles": 0, "where": r["where"]})
+        e["n"] += 1
+        e["cycles"] += r["cycles"]
+    print(f'{"kernel op":<16} {"calls":>6} {"cycles":>13} {"ms":>8} {"% of frame":>10}  ran on')
+    for op, e in sorted(by.items(), key=lambda kv: -kv[1]["cycles"]):
+        print(f'{op:<16} {e["n"]:>6} {e["cycles"]:>13,} '
+              f'{e["cycles"] / clock_mhz / 1000:>8.2f} '
+              f'{100.0 * e["cycles"] / total:>9.2f}%  {e["where"]}')
+
+
+def _trim_ticks(ax, widest: float) -> None:
+    """Drop the x ticks that sit past the data.
+
+    The axis is stretched beyond the longest bar to leave room for that bar's label, and
+    matplotlib fills the empty stretch with ticks -- a `120%` and a `140%` on an axis of
+    shares, which is a label that cannot be true.
+    """
+    ax.set_xticks([t for t in ax.get_xticks() if t <= widest * 1.15])
+
+
+def dispatch_contribution_figure(rows: list[dict], model: str = "", top: int = 12,
+                                 clock_mhz: float = PROFILE_CLOCK_MHZ,
+                                 engine_ops: tuple = ENGINE_OPS):
+    """Each dispatch's share of the frame, and the same shares summed by kernel op.
+
+    Two panels, because "which layer is expensive" and "which op is expensive" are two
+    questions and a network answers them differently. Both panels are shares of the SAME
+    total -- the sum of the per-dispatch cycle counts the board printed -- so a bar in one
+    panel is comparable with a bar in the other.
+
+    A dispatch is drawn in the colour of the core that ran it. When nothing reached the
+    engine there is one colour and no legend: the title says what ran.
+    """
+    import matplotlib.pyplot as plt
+
+    if not rows:
+        raise ValueError("no dispatch rows to draw -- the console carried none")
+    shares = dispatch_shares(rows, engine_ops)
+    total = sum(r["cycles"] for r in shares)
+    ms = total / clock_mhz / 1000
+    on_engine = sum(1 for r in shares if r["where"] == "engine")
+    colour = {"engine": S2, "first core": S1}
+    label = f"{model} " if model else ""
+
+    biggest = sorted(shares, key=lambda r: -r["cycles"])[:top]
+    bars = [(f'{r["name"][:34]}\n({r["op"]})', r["pct"], colour[r["where"]], r["cycles"])
+            for r in biggest]
+    covered = sum(r["pct"] for r in biggest)
+
+    by: dict[str, list] = {}
+    for r in shares:
+        e = by.setdefault(r["op"], [0, 0, r["where"]])
+        e[0] += 1
+        e[1] += r["cycles"]
+    ops = sorted(by.items(), key=lambda kv: -kv[1][1])
+
+    fig, (a, b) = plt.subplots(1, 2, figsize=(11.4, max(4.2, 0.42 * max(len(bars), len(ops)) + 1.6)),
+                               gridspec_kw={"width_ratios": [1.15, 1.0]})
+
+    # -- panel A: the individual dispatches -------------------------------------------
+    ys = list(range(len(bars)))[::-1]
+    widest = max(w for _, w, _, _ in bars)
+    for y, (name, pct, col, cyc) in zip(ys, bars):
+        a.barh(y, pct, height=0.62, color=col, zorder=3)
+        a.annotate(f"{pct:.2f}%   {cyc:,}", (pct, y), textcoords="offset points",
+                   xytext=(6, 0), va="center", fontsize=8, color=INK)
+    a.set_yticks(ys)
+    a.set_yticklabels([n for n, _, _, _ in bars], fontsize=7.5)
+    a.set_xlim(0, widest * 1.62)
+    a.set_ylim(-0.7, len(bars) - 0.3)
+    a.set_xlabel("% of the frame's cycles", fontsize=8.5, color=INK2)
+    a.set_title(f"{label}by dispatch"
+                + ("" if len(bars) == len(shares)
+                   else f": the {len(bars)} most expensive, {covered:.1f}% of the frame"),
+                fontsize=10, color=INK, loc="left", pad=8)
+    _axes_style(a)
+    _trim_ticks(a, widest)
+
+    # -- panel B: the same shares, summed by kernel op ---------------------------------
+    ys = list(range(len(ops)))[::-1]
+    widest = max(e[1] for _, e in ops) * 100.0 / total
+    for y, (op, (n, cyc, where)) in zip(ys, ops):
+        pct = 100.0 * cyc / total
+        b.barh(y, pct, height=0.62, color=colour[where], zorder=3)
+        calls = "call" if n == 1 else "calls"
+        b.annotate(f"{pct:.2f}%   {n} {calls}", (pct, y), textcoords="offset points",
+                   xytext=(6, 0), va="center", fontsize=8, color=INK)
+    b.set_yticks(ys)
+    b.set_yticklabels([op for op, _ in ops], fontsize=8)
+    b.set_xlim(0, widest * 1.58)
+    b.set_ylim(-0.7, len(ops) - 0.3)
+    b.set_xlabel("% of the frame's cycles", fontsize=8.5, color=INK2)
+    b.set_title(f"{label}by kernel op, all {len(shares)} dispatches",
+                fontsize=10, color=INK, loc="left", pad=8)
+    _axes_style(b)
+    _trim_ticks(b, widest)
+
+    if on_engine:
+        handles = [plt.Rectangle((0, 0), 1, 1, color=S1),
+                   plt.Rectangle((0, 0), 1, 1, color=S2)]
+        b.legend(handles, ["first core (MBP kernels)", "second core (RoCC engine)"],
+                 frameon=False, fontsize=8, loc="lower right")
+    fig.suptitle(f"{len(shares)} dispatches, {total:,} cycles, {ms:,.2f} ms at "
+                 f"{clock_mhz:g} MHz"
+                 + (f" -- {on_engine} of them on the engine" if on_engine
+                    else " -- all of them on the first core"),
+                 fontsize=9.5, color=INK2, x=0.01, ha="left", y=0.995)
+    fig.tight_layout(rect=(0, 0, 1, 0.965))
+    plt.close(fig)   # the inline backend auto-shows a live figure, and
+                     # returning it renders a second copy
+    return fig
+
+
+# --------------------------------------------------------------------------------------
+# Unit 5: scheduling the speech encoder, and the recorded two-model comparison.
+#
+# 5.1 and 5.2 schedule ONE model -- Moonshine's encoder over a 2 s window, the same 129
+# dispatches Unit 2 ran on the attendee's card. It is worth scheduling because its work
+# lands on BOTH machines: 39 dispatches are engine kernels on hart 1 and 90 are MBP
+# kernels on hart 0, so the two lanes can overlap and the schedule's duration is below
+# the sum of its costs. The detector cannot teach that -- all 8 of its dispatches are
+# hart-0 kernels in a chain, so its schedule IS the sum and there is nothing to place.
+#
+# 5.3 reads a recorded two-model result and needs no solver, no XPU-RT and no board.
+# --------------------------------------------------------------------------------------
+
+#: The encoder workload 5.1 solves, and the artifacts XPU-RT names after it.
+ENC_SPEC = "data/toplevel/networks_pynqz1_enc_w20.json"
+ENC_SCHEDULE = XPURT_SCHEDULE
+
+#: The makespan the recorded solve of that workload reached, in ms.
+ENC_MAKESPAN_MS = 8280.64
+
+#: Where 5.2 writes the profile tree built from the attendee's own board, and the spec
+#: and schedule that read it.
+ENC_MEASURED_DIR = Path.home() / "work" / "measured_encoder"
+ENC_MEASURED_SPEC = "networks_encoder_measured_on_your_board.json"
+ENC_MEASURED_SCHEDULE = "networks_encoder_measured_on_your_board_cpsat_profiled"
+
+
+def _enc_spec(rel: str = ENC_SPEC) -> dict | None:
+    root = xpurt_root()
+    if root is None or not (root / rel).exists():
+        return None
+    return json.loads((root / rel).read_text())
+
+
+def _spec_impls(spec: dict) -> dict[str, str]:
+    """`CPU_P#0` -> `hart0_pext`, for every machine the spec declares.
+
+    XPU-RT names a machine one way in a dispatch graph (`CPU_P#0`) and another in the
+    profile paths (`hart0_pext`). Both names come out of the spec, so the mapping is
+    read from it rather than hard-coded.
+    """
+    out = {}
+    for kind, n in spec.get("hardware", {}).get("machines", {}).items():
+        impl = spec.get("hardware", {}).get("profile_hw", {}).get(kind)
+        for i in range(int(n)):
+            out[f"{kind.upper()}#{i}"] = impl
+    return out
+
+
+def _enc_home(spec: dict) -> dict[int, str]:
+    """dispatch id -> the implementation that actually ran it.
+
+    The dispatch graph names the machines that did NOT run a dispatch, in
+    `infeasible_machines`; whatever is left is the one that did.
+    """
+    root = xpurt_root()
+    net = next(iter(spec["networks"]))
+    deps = spec["networks"][net]["dispatch_deps_path"]
+    path = Path(deps) if os.path.isabs(deps) else root / deps
+    if not path.exists():
+        return {}
+    graph = json.loads(path.read_text())
+    impls = _spec_impls(spec)
+    home = {}
+    for info in graph["dispatches"].values():
+        left = [m for m in impls if m not in set(info.get("infeasible_machines", []))]
+        if len(left) == 1:
+            home[int(info["id"])] = impls[left[0]]
+    return home
+
+
+#: Machine ids as XPU-RT spells them, and as the tutorial names them to a reader.
+_LANE_NAMES = {"CPU_P#0": "hart 0, P-extension", "CPU_E#0": "hart 1, engine"}
+
+
+def show_encoder_schedule(name: str = ENC_SCHEDULE) -> None:
+    """What the solve found: where the work went, and what the overlap was worth.
+
+    Reads the schedule XPU-RT just wrote, so every number here is that solve's own.
+    """
+    root = xpurt_root()
+    if root is None:
+        print("No XPU-RT tree on this machine, so there is no schedule to read.")
+        return
+    sched = root / "schedules" / f"scheduled_{name}.json"
+    if not sched.exists():
+        print(f"No schedule at {sched.name} yet -- run the solve cell above first.")
+        return
+    ds = list(json.loads(sched.read_text())["dispatches"].values())
+    m = solved_metrics(name)
+    lanes: dict[str, list] = {}
+    for d in ds:
+        lanes.setdefault(d["hardware_target"], []).append(d)
+    serial = sum(d["duration"] for d in ds)
+    mk = float(m["makespan_ms"])
+    cp = float(m.get("critical_path_ms", 0.0))
+
+    def row(label, val, note=""):
+        print(f'{label:<26} {val:>12}   {note}')
+
+    row("dispatches", f"{len(ds):,}",
+        ", ".join(f'{len(v)} on {_LANE_NAMES.get(k, k).split(",")[0]}'
+                  for k, v in sorted(lanes.items(), reverse=True)))
+    row("one lane, end to end", f"{serial:,.2f} ms", "every dispatch serialised")
+    row("dependency chain", f"{cp:,.2f} ms", "the longest path: no schedule is shorter")
+    row("this schedule", f"{mk:,.2f} ms", f"{serial - mk:,.2f} ms below one lane")
+    print()
+    for k, v in sorted(lanes.items(), reverse=True):
+        row(f"{_LANE_NAMES.get(k, k)} busy", f'{sum(d["duration"] for d in v):,.2f} ms', "")
+    row("cross-machine handoffs", f'{m.get("cross_device_transitions", 0):,}', "")
+    row("late dispatches", f'{m.get("op_deadline_miss_count", 0):,}',
+        "this workload carries no deadline")
+
+
+def write_measured_encoder_profile(rows: list[dict]) -> Path | None:
+    """Rewrite the encoder workload's per-dispatch costs with your board's cycles.
+
+    The scheduler reads costs as a `results.csv` per machine, one row per dispatch.
+    This copies the two shipped files and replaces the cost of every MEASURED row with
+    the cycles your board reported for that dispatch id. Both files are rewritten,
+    because both machines really ran work: 90 dispatches on the first core and 39 on the
+    engine, and your board timed all of them.
+
+    The rows that are not timings are carried over untouched. A dispatch's cell on the
+    machine that did not run it records that the machine cannot run it -- an absent
+    opcode, or a kernel nothing has ever timed there -- and no board run can measure
+    that. Everything else in the workload is reused: the dispatch graph, the machine
+    model, the two cores' instruction sets.
+
+    Returns the workload spec to solve, or None with the reason printed.
+    """
+    import csv as _csv
+
+    if not rows:
+        print("Nothing to convert: the console carried no per-dispatch rows.")
+        return None
+    root = xpurt_root()
+    if root is None:
+        print("Not written: no XPU-RT checkout on this machine, so there is no profile "
+              "tree to re-cost and no solver to read it.")
+        return None
+    spec = _enc_spec()
+    if spec is None:
+        print(f"Not written: this XPU-RT checkout does not carry {ENC_SPEC}, so there is "
+              "no workload to re-cost.")
+        return None
+    home = _enc_home(spec)
+    if not home:
+        print("Not written: the workload's dispatch graph is not in this checkout, so "
+              "which machine ran which dispatch cannot be read.")
+        return None
+
+    cycles = {r["dispatch_id"]: r["cycles"] for r in rows}
+    net = next(iter(spec["networks"]))
+    prof = spec["hardware"]["profile"]
+    ENC_MEASURED_DIR.mkdir(parents=True, exist_ok=True)
+    wrote = 0
+    for kind, impl in spec["hardware"]["profile_hw"].items():
+        src = _profile_csv(spec, kind)
+        if src is None:
+            print(f"Not written: the shipped tree has no {impl} file to re-cost.")
+            return None
+        with open(src, newline="") as fh:
+            rd = _csv.DictReader(fh)
+            fields, out = list(rd.fieldnames or []), list(rd)
+        n = 0
+        for r in out:
+            did = int(r["dispatch_id"])
+            if r.get("cell_class") != "measured" or did not in cycles:
+                continue      # an exclusion, not a timing: carried over unchanged
+            c = cycles[did]
+            ms = c / PROFILE_CLOCK_MHZ / 1000.0
+            r["mean_time"], r["mean_unit"] = f"{ms:.9f}", "ms"
+            r["mean_time_ns"] = f"{ms * 1e6:.3f}"
+            r["cycles"], r["source"] = str(c), "board_measured_on_your_card"
+            n += 1
+        dst = (ENC_MEASURED_DIR / "profile" / impl / prof["target"] / net
+               / f"{net}.int8" / prof.get("topo_tag", "topo_0") / "results.csv")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with open(dst, "w", newline="") as fh:
+            w = _csv.DictWriter(fh, fieldnames=fields)
+            w.writeheader()
+            w.writerows(out)
+        print(f"  {impl:<13} {n:>3} of {len(out)} rows re-costed from your board  {dst}")
+        wrote += n
+
+    if wrote != len(cycles):
+        print(f"  NOTE: your console carried {len(cycles)} dispatches and {wrote} rows "
+              f"were re-costed. A dispatch the workload does not hold is ignored.")
+    spec["hardware"]["profile"]["gen_root"] = str(ENC_MEASURED_DIR)
+    for info in spec["networks"].values():
+        deps = info.get("dispatch_deps_path", "")
+        if deps and not os.path.isabs(deps):
+            info["dispatch_deps_path"] = str(root / deps)
+    path = ENC_MEASURED_DIR / ENC_MEASURED_SPEC
+    path.write_text(json.dumps(spec, indent=2))
+    print(f"  workload to solve: {path}")
+    return path
+
+
+def compare_measured_encoder_makespan() -> None:
+    """The recorded schedule's duration beside the one your board's costs produced."""
+    shipped = _enc_spec()
+    path = ENC_MEASURED_DIR / ENC_MEASURED_SPEC
+    mine = json.loads(path.read_text()) if path.exists() else None
+    if shipped is None or mine is None:
+        print("No measured solve to compare -- the cells above did not produce one.")
+        return
+    try:
+        a, b = solved_metrics(ENC_SCHEDULE), solved_metrics(ENC_MEASURED_SCHEDULE)
+    except (FileNotFoundError, OSError) as exc:
+        print(f"One of the two solves has written no metrics file yet ({exc}). Run 5.1's "
+              "solve and the solve above, then this cell.")
+        return
+    def total(spec: dict) -> int:
+        # Each machine's file carries cycle counts only for the dispatches that machine
+        # ran, so the two files add up to the frame without counting anything twice.
+        return sum(sum(_csv_cycles(_profile_csv(spec, k)).values())
+                   for k in spec["hardware"]["profile_hw"])
+
+    was, now = total(shipped), total(mine)
+    for label, m, cyc in (("recorded profile", a, was), ("your board", b, now)):
+        print(f'{label:<18} makespan {m["makespan_ms"]:>9.2f} ms   '
+              f'{cyc:>12,} cycles   {m.get("cross_device_transitions", 0):>3} handoffs   '
+              f'late {m.get("op_deadline_miss_count", 0)}')
+    if was:
+        print(f'\nYour board ran the 129 dispatches in {now - was:+,} cycles, '
+              f'{100.0 * (now - was) / was:+.3f}% of the recorded profile.')
+    print(f'The schedule solved from your costs is '
+          f'{float(b["makespan_ms"]) - float(a["makespan_ms"]):+,.2f} ms against the '
+          f'recorded one.')
+
+
+# --------------------------------------------------------------------------------------
+# 5.3: the recorded two-model comparison. No solver, no XPU-RT, no board.
+# --------------------------------------------------------------------------------------
+
+#: The recorded two-model schedules 5.3 reads. SignDetLite periodic at 1,000 ms with
+#: periodic stripping on; Moonshine non-periodic and carrying no deadline.
+SCHEDULE_GOLDEN = "schedule_two_models.json"
+
+#: The workload those schedules were solved from, and where 5.4 writes the copy it
+#: solves -- the shipped file with the contention model switched off.
+TWO_MODEL_SPEC = "data/toplevel/networks_pynqz1_coloc2m_sdp_b4_T1000.json"
+TWO_MODEL_DIR = Path.home() / "work" / "two_model"
+
+
+def two_model_schedules(asset: str = SCHEDULE_GOLDEN) -> dict:
+    """The recorded schedules for the detector and the speech model sharing one SoC."""
+    for cand in (ASSETS / asset, repo_file(f"notebooks/assets/{asset}")):
+        if cand and Path(cand).exists():
+            return json.loads(Path(cand).read_text())
+    raise SystemExit(f"This checkout does not ship {asset} -- the recorded schedules "
+                     "live in the curated tree the seats carry.")
+
+
+def show_policy_table(golden: dict) -> None:
+    """Where each policy lands the speech model, and how many detector windows it broke."""
+    print(f'{"policy":<16} {"speech finishes":>16}   {"late detector dispatches":>24}')
+    for p in sorted(golden["policies"], key=lambda r: r["makespan_ms"]):
+        flag = "on time" if p["deadline_misses"] == 0 else ""
+        print(f'{plain_name(p["scheduler"]):<16} {p["makespan_ms"]:>13,.2f} ms   '
+              f'{p["deadline_misses"]:>21,}   {flag}')
+    print(f'\n{golden["dispatches_per_schedule"]:,} dispatches per schedule   '
+          f'detector period {golden["period_ms"]:,.0f} ms x '
+          f'{golden["num_instances"]} instances')
+
+
+def _late_mask(g: dict, period: float) -> list[bool]:
+    """Which packed dispatches are detector work that ends after its own window."""
+    out = []
+    for s, d, j in zip(g["start_ms"], g["duration_ms"], g["job"]):
+        out.append(j > 0 and s + d > j * period + 1e-9)
+    return out
+
+
+def schedule_gantt_figure(golden: dict, drawn: tuple = ("heft", "edf")):
+    """The two recorded schedules as Gantt charts: two machine lanes, one bar per dispatch.
+
+    One panel per policy on a shared millisecond axis. The detector's four instances are
+    drawn in the second slot colour and its late dispatches in the status colour, so the
+    trade-off is visible: the fast policy overruns the detector's windows, and the
+    on-time one pays for it in speech latency.
+    """
+    import matplotlib.pyplot as plt
+
+    period, n_inst = golden["period_ms"], golden["num_instances"]
+    labels = golden["machine_labels"]
+    fig, axes = plt.subplots(len(drawn), 1, figsize=(9.6, 4.8), sharex=True)
+    span = max(golden["drawn"][p]["makespan_ms"] for p in drawn) * 1.02
+
+    for ax, pol in zip(axes, drawn):
+        g = golden["drawn"][pol]
+        late = _late_mask(g, period)
+        _axes_style(ax)
+        ax.grid(axis="x", color=GRID, lw=0.6, zorder=0)
+        # The detector's windows, behind everything.
+        for i in range(1, n_inst + 1):
+            ax.axvline(i * period, color=GRID, lw=1.0, ls=(0, (4, 3)), zorder=1)
+        # One broken_barh per (lane, class) so 2,285 bars draw as three calls a lane.
+        for lane in (0, 1):
+            y = 0.55 - lane * 0.42
+            for cls, colour, z in ((0, S1, 2), (1, S2, 3), (2, BAD, 4)):
+                bars = [(s, d) for s, d, m, j, lt
+                        in zip(g["start_ms"], g["duration_ms"], g["machine"],
+                               g["job"], late)
+                        if m == lane and (2 if lt else (1 if j else 0)) == cls]
+                if bars:
+                    ax.broken_barh(bars, (y, 0.3), facecolors=colour, zorder=z)
+        ax.set_yticks([0.70, 0.28])
+        ax.set_yticklabels(labels, fontsize=8)
+        ax.set_ylim(0.02, 1.02)
+        ax.set_xlim(0, span)
+        miss = g["deadline_misses"]
+        ax.set_title(
+            f'{plain_name(pol)} -- speech finishes at {g["makespan_ms"]:,.0f} ms, '
+            + ("every detector window met" if not miss
+               else f"{miss} detector dispatches late"),
+            fontsize=9.5, color=INK, loc="left", pad=6)
+        ax.axvline(g["makespan_ms"], color=INK2, lw=1.2, zorder=5)
+
+    axes[-1].set_xlabel("milliseconds", fontsize=8.5, color=INK2)
+    handles = [plt.Rectangle((0, 0), 1, 1, fc=c) for c in (S1, S2, BAD)]
+    fig.legend(handles, ("speech model", "detector, on time", "detector, late"),
+               loc="upper left", fontsize=8, frameon=False, ncol=3,
+               bbox_to_anchor=(0.215, 1.0))
+    # Explicit margins rather than tight_layout: the lane labels are wide and the
+    # figure legend sits outside every axes, which tight_layout cannot account for.
+    fig.subplots_adjust(left=0.215, right=0.98, top=0.86, bottom=0.12, hspace=0.46)
+    plt.close(fig)   # the inline backend auto-shows a live figure, and
+                     # returning it renders a second copy
+    return fig
+
+
+def solve_two_model_cell(policy: str = "edf") -> None:
+    """Solve ONE policy of the two-model workload here, and check it against the record.
+
+    A list policy needs no CP-SAT and no `ortools`: only the XPU-RT checkout and the
+    workload's own profile tree. The recorded comparison above carries the whole result
+    without either.
+    """
+    root, rel = xpurt_root(), TWO_MODEL_SPEC
+    if root is None:
+        print("Not run: no XPU-RT checkout on this machine. The comparison above "
+              "carries the whole result without one.")
+        return
+    if not (root / rel).exists():
+        print(f"Not run: this XPU-RT checkout does not carry {rel}.")
+        return
+    # Solve a copy with the memory-contention model switched off, which is the basis
+    # the recorded comparison is on. Left to the shipped workload the answer would
+    # depend on whether this checkout happens to carry the contention measurement, and
+    # a checkout without it falls back silently rather than saying so.
+    spec = json.loads((root / rel).read_text())
+    spec.setdefault("contention", {})["enabled"] = False
+    for info in spec["networks"].values():
+        deps = info.get("dispatch_deps_path", "")
+        if deps and not os.path.isabs(deps):
+            info["dispatch_deps_path"] = str(root / deps)
+    gen = spec.get("hardware", {}).get("profile", {}).get("gen_root")
+    if gen and not os.path.isabs(gen):
+        spec["hardware"]["profile"]["gen_root"] = str(root / gen)
+    TWO_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    path = TWO_MODEL_DIR / Path(rel).name
+    path.write_text(json.dumps(spec, indent=2))
+
+    r = sh(f"cd {root} && XPURT_CPSAT_WORKERS=1 {xpurt_python() or sys.executable} "
+           f"scripts/run_xpurt_schedule.py --networks-json {path} "
+           f"--scheduler {policy} --profiled", timeout=900, quiet=True)
+    for line in r.stdout.splitlines():
+        if "makespan_us" in line:
+            print(line.strip())
+    rec = next((p for p in two_model_schedules()["policies"]
+                if p["scheduler"] == policy), None)
+    if rec:
+        print(f'the record says makespan {rec["makespan_ms"]:,.2f} ms, '
+              f'{rec["deadline_misses"]} late detector dispatches')

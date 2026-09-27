@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-27T17:28:30Z",
+  "generated_at": "2026-09-27T18:19:59Z",
   "generated_by": "content_validate.py",
-  "source_commit": "189c07b2328f4c12b03cc6bb169c43e5b03498fb+working-tree",
-  "note": "Unit 4: live runs only; the lab follows ~/tut",
+  "source_commit": "ea8e9084610f",
+  "note": "Unit 5 schedules the speech encoder and two models at once; the demos run in the background and the speech demo uses the small font",
   "files": [
     {
       "path": "work/.backend/ospi-camera/README.md",
@@ -181,6 +181,11 @@
       "sha256": "34fabc700067b39c8ebb357c85642d6c4c976ae0b26dd1ca71f84634fdc815f3"
     },
     {
+      "path": "work/assets/schedule_two_models.json",
+      "bytes": 83693,
+      "sha256": "ec02be43321e9442ebecceb43cd983066cf32ce22e63a9e8935f18e18f7dc58a"
+    },
+    {
       "path": "work/assets/signdet_board_cycles.json",
       "bytes": 12470,
       "sha256": "b2cdb70a4c49a81c63d8e88229fac5ddde07b35a4fcfabefca76b19677fb9c79"
@@ -191,17 +196,22 @@
       "sha256": "04a58da62b14e08e63886f2d45b4c6730bf19c60a25d882514523c16aaa097c8"
     },
     {
+      "path": "work/assets/speech_profile.bin",
+      "bytes": 7964092,
+      "sha256": "42ba669883bc94b7b24807aae2a189a3f457c7c3a10c8e7af3d5a486b886a7a2"
+    },
+    {
       "path": "work/iiswc_lab.py",
-      "bytes": 121372,
-      "sha256": "ff8360ca692920d30a7c265a0fa4002c299b9ac56ede5877787131afb67bc0b5"
+      "bytes": 152270,
+      "sha256": "fbaa8547e21c8cdf4ef02c0955bcc6fb49370cb7c92446c633bed10b724f469b"
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 124327,
-      "sha256": "4397349f9daec1d5241580a2806385842a64cb62fc2be15b5a9a70dcc3d212f2",
-      "cells": 178,
+      "bytes": 139549,
+      "sha256": "5c3de5d3d0b290682835cee20567c7efad593ef5a531691709a432660ce19b01",
+      "cells": 204,
       "nbformat": 4,
-      "source_chars": 87640,
+      "source_chars": 98648,
       "schema_checked": true
     },
     {
@@ -211,14 +221,14 @@
     },
     {
       "path": "work/tools/build_notebook.py",
-      "bytes": 97263,
-      "sha256": "b923eca7c49655d83a39fa940f9445c20b8ca852ae8b46ba6c0b4fac3784b6da"
+      "bytes": 109331,
+      "sha256": "3e1a13b0a5a1f835a3efbeb5f384a1467e0ad917ee32d67ec30e7c2c4df7db21"
     }
   ],
   "repo": {
     "url": "https://github.com/ucb-bar/robotics-stack-tutorial.git",
     "ref": "main",
-    "commit": "4fbec0cd35a2cb23d9ebfbc6df681997b4d2c7b6",
+    "commit": "81a6aedab535d6ac07d5aa374c544748cd76aba3",
     "mount": "repo",
     "guide": [
       [
