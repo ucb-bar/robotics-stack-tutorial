@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-27T18:19:59Z",
+  "generated_at": "2026-09-27T19:13:27Z",
   "generated_by": "content_validate.py",
   "source_commit": "ea8e9084610f",
-  "note": "Unit 5 schedules the speech encoder and two models at once; the demos run in the background and the speech demo uses the small font",
+  "note": "Speedscope TACIT traces join the seat assets, alongside the speech profiling image and the two-model schedule",
   "files": [
     {
       "path": "work/.backend/ospi-camera/README.md",
@@ -107,8 +107,8 @@
     },
     {
       "path": "work/.backend/ospi-camera/modules/ospi_camera/backend/src/ospi_camera.c",
-      "bytes": 33013,
-      "sha256": "c3f922c2ead5dbe001a86b85d8f7638afec46bb6068ac130b99a9048665efe7b"
+      "bytes": 34771,
+      "sha256": "1fddeeb90892f3075628bd2b816fb2034f5833f2be188bc63f3df212f98ac806"
     },
     {
       "path": "work/.backend/ospi-camera/modules/ospi_camera/backend/src/ospi_camera_dma.c",
@@ -199,6 +199,21 @@
       "path": "work/assets/speech_profile.bin",
       "bytes": 7964092,
       "sha256": "42ba669883bc94b7b24807aae2a189a3f457c7c3a10c8e7af3d5a486b886a7a2"
+    },
+    {
+      "path": "work/assets/trace-256.iter039.median.speedscope.json",
+      "bytes": 1001848,
+      "sha256": "db9c2ed934b28e5df349f08c7de65c50c4566e82fe427e4d825c5d8bf3a71f6c"
+    },
+    {
+      "path": "work/assets/trace-256.iter158.slowest5.speedscope.json",
+      "bytes": 1274737,
+      "sha256": "868cca0e1e589f7e66401c3d170dea9514fd4a90a7d8a3d29032e55e697292cd"
+    },
+    {
+      "path": "work/assets/trace-256.iter183.slowest1.speedscope.json",
+      "bytes": 1562097,
+      "sha256": "984c1acdee17cf2b06b4d86615ae6ff8a4935a12609d994d50c9ea7b6400870e"
     },
     {
       "path": "work/iiswc_lab.py",

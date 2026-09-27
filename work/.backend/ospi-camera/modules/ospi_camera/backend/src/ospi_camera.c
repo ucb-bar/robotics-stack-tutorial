@@ -616,12 +616,44 @@ static int capture(struct ospi_camera_context *ctx, uint8_t *dst, uint32_t want,
 #ifndef OSPI_CAMERA_MAX_INTG
 #define OSPI_CAMERA_MAX_INTG 3900
 #endif
-#if OSPI_CAMERA_FRAME_LEN || OSPI_CAMERA_MAX_INTG
+/*
+ * LINE LENGTH, PROGRAMMED AND NOT INHERITED.
+ *
+ * LINE_LEN (0x0342/43) is the total pixel-clock period of one line: the 326
+ * bytes the sensor reads out plus the horizontal blanking after them. Nothing
+ * in this file used to write it, because 370 is the part's power-up value and
+ * the capture worked.
+ *
+ * That reasoning has one hole, and it is not hypothetical. The shield keeps its
+ * own power across a SoC reset, so the sensor's registers survive every `run`:
+ * whatever the previous guest left in them is what the next capture inherits,
+ * for as long as the board stays powered. A card found carrying LINE_LEN 368
+ * instead of 370 emits ONE EXTRA BYTE after the last row -- the capture core
+ * counts a 325th line, DMA_BYTES comes back 105625 against a 326x324 frame of
+ * 105624, and ospi_camera_dma_capture() rejects the transfer on its geometry
+ * check. The picture in DRAM is a perfectly good 326-wide image; the frame is
+ * refused for its one-byte tail, the sample prints CAM_ERROR instead of
+ * CAM_FRAME, and everything downstream that reads a CAM_FRAME line finds none.
+ *
+ * Two shortened blanking periods are not something a capture should have to
+ * survive by luck, so the timing this code depends on is now stated rather
+ * than assumed. Writing it costs one I2C pair and makes the capture
+ * independent of what ran on the board before it. Override with
+ * OSPI_CAMERA_LINE_LEN, or 0 to leave the register alone.
+ */
+#ifndef OSPI_CAMERA_LINE_LEN
+#define OSPI_CAMERA_LINE_LEN 370
+#endif
+#if OSPI_CAMERA_FRAME_LEN || OSPI_CAMERA_MAX_INTG || OSPI_CAMERA_LINE_LEN
 	{
 		static const struct { uint16_t reg; uint8_t val; } ex[] = {
 #if OSPI_CAMERA_FRAME_LEN
 			{ HM01B0_REG_FRAME_LEN_H, (OSPI_CAMERA_FRAME_LEN >> 8) & 0xffU },
 			{ HM01B0_REG_FRAME_LEN_L, OSPI_CAMERA_FRAME_LEN & 0xffU },
+#endif
+#if OSPI_CAMERA_LINE_LEN
+			{ HM01B0_REG_LINE_LEN_H,  (OSPI_CAMERA_LINE_LEN >> 8) & 0xffU },
+			{ HM01B0_REG_LINE_LEN_L,  OSPI_CAMERA_LINE_LEN & 0xffU },
 #endif
 #if OSPI_CAMERA_MAX_INTG
 			{ HM01B0_REG_MAX_INTG_H,  (OSPI_CAMERA_MAX_INTG >> 8) & 0xffU },
@@ -647,9 +679,10 @@ static int capture(struct ospi_camera_context *ctx, uint8_t *dst, uint32_t want,
 			       ex[i].reg, ex[i].val, back,
 			       back == ex[i].val ? "" : "  <- DID NOT STICK");
 		}
-		printk("         FRAME_LEN=%u MAX_INTG=%u requested (0 = untouched); "
-		       "write %s\n", (unsigned)OSPI_CAMERA_FRAME_LEN,
-		       (unsigned)OSPI_CAMERA_MAX_INTG, rc == 0 ? "ACKed" : "FAILED");
+		printk("         FRAME_LEN=%u MAX_INTG=%u LINE_LEN=%u requested "
+		       "(0 = untouched); write %s\n", (unsigned)OSPI_CAMERA_FRAME_LEN,
+		       (unsigned)OSPI_CAMERA_MAX_INTG, (unsigned)OSPI_CAMERA_LINE_LEN,
+		       rc == 0 ? "ACKed" : "FAILED");
 	}
 #endif
 
