@@ -549,40 +549,155 @@ def _decoder() -> Path:
         "~/mb-tools/bin/ltrace-decoder; ask an instructor if it is absent.")
 
 
+#: Frames that mean "this hart is doing model work", and the ones that mean it is not.
+#: Both lanes are matched against the same two sets so the two percentages are comparable;
+#: a lane simply reports which of them it actually contains, in `match`.
+MODEL_FRAMES = ("mb_pext_conv", "fe_log2_q8")
+#: The scheduler's idle frame is the honest measure of "this hart had nothing to do".
+#: arch_spin_relax alone misses almost all of it: on a measured capture arch_cpu_idle held
+#: the stack for 93% of one lane's window while the spin frame accounted for 6%.
+IDLE_FRAMES = ("arch_cpu_idle",)
+TIMELINE_BUCKETS = 13
+
+
+def _covered(evs: list, patterns: tuple) -> tuple[list, int]:
+    """The intervals where at least one matching frame was ON THE STACK, and the last one's end.
+
+    Counting events would answer a different question: a frame that is entered once and runs
+    for a second is one event and a second of work. So this walks B/E in timestamp order and
+    keeps a depth, which is what "on the stack" means, and merges nesting into one interval.
+    """
+    marks = []
+    for e in evs:
+        if not any(p in e["name"] for p in patterns):
+            continue
+        ts = e.get("ts", 0)
+        if e.get("ph") == "X":
+            marks.append((ts, +1)); marks.append((ts + e.get("dur", 0), -1))
+        elif e.get("ph") == "B":
+            marks.append((ts, +1))
+        elif e.get("ph") == "E":
+            marks.append((ts, -1))
+    marks.sort()
+    spans, depth, opened, last_end = [], 0, None, 0
+    for ts, d in marks:
+        was = depth
+        depth += d
+        if was == 0 and depth > 0:
+            opened = ts
+        elif was > 0 and depth <= 0:
+            if opened is not None:
+                spans.append((opened, ts)); last_end = ts
+            opened, depth = None, 0
+    return spans, last_end
+
+
+def _minus(spans: list, other: list) -> list:
+    """`spans` with every part that overlaps `other` removed.
+
+    Needed because the frames NEST: the scheduler's idle frame is an ANCESTOR of the work
+    done inside it, so counting "idle was on the stack" and "a model frame was on the stack"
+    separately gave 16.9% model and 93.2% idle on one measured lane -- 110% of a window.
+    Idle has to mean idle AND NOT working for the two numbers to be readable together.
+    """
+    out = []
+    for a, b in spans:
+        cur = [(a, b)]
+        for c, d in other:
+            nxt = []
+            for x, y in cur:
+                if d <= x or c >= y:
+                    nxt.append((x, y)); continue
+                if c > x:
+                    nxt.append((x, min(c, y)))
+                if d < y:
+                    nxt.append((max(d, x), y))
+            cur = nxt
+            if not cur:
+                break
+        out.extend(cur)
+    return out
+
+
+def _pct_per_bucket(spans: list, window: int, n: int) -> list:
+    """What fraction of each of n equal slices of the window those spans cover, as percentages."""
+    if window <= 0 or not spans:
+        return [0.0] * n
+    edge = window / n
+    out = []
+    for i in range(n):
+        lo, hi = i * edge, (i + 1) * edge
+        got = sum(max(0.0, min(hi, b) - max(lo, a)) for a, b in spans)
+        out.append(100.0 * got / edge)
+    return out
+
+
 def _summarise_timeline(merged: Path, trace_label: str) -> dict:
     """Reduce a merged Perfetto file to the per-lane table the timeline cells read.
 
     WHAT IS COUNTED AND WHY. A decode that exits zero can still be empty, and size tells you
     nothing: a lane that stopped mid-packet and a lane that ran the whole window produce files
     of similar length. The two fields that separate them are the number of DISTINCT function
-    names on each lane and the name of its first event, so both are recorded here rather than
-    left for a reader to compute.
+    names on each lane and the name of its first event, so both are recorded here.
+
+    The rest of the table is what 3.6 reads: how much of the one shared window each hart spent
+    inside model frames, the same split into buckets so it can be drawn, and where each lane's
+    model work stopped -- which is the comparison the unit exists to make.
     """
     events = json.loads(merged.read_text())
     events = events["traceEvents"] if isinstance(events, dict) else events
     per: dict = {}
     for e in events:
-        if e.get("ph") not in ("B", "X") or "name" not in e:
+        if e.get("ph") not in ("B", "E", "X") or "name" not in e:
             continue
         per.setdefault(e.get("tid", e.get("pid")), []).append(e)
-    lanes: dict = {}
+
+    lanes, ends = {}, {}
     for tid, evs in sorted(per.items()):
+        evs.sort(key=lambda e: e.get("ts", 0))
+        frames = [e for e in evs if e.get("ph") in ("B", "X")]
         names: dict = {}
-        for e in evs:
+        for e in frames:
             names[e["name"]] = names.get(e["name"], 0) + 1
-        ts = [e["ts"] for e in evs if "ts" in e]
-        top = sorted(names.items(), key=lambda kv: -kv[1])[:5]
+        ts = [e.get("ts", 0) for e in evs]
+        window = max(ts) if ts else 0
+        model_spans, model_last = _covered(evs, MODEL_FRAMES)
+        idle_spans = _minus(_covered(evs, IDLE_FRAMES)[0], model_spans)
+        tot = lambda sp: sum(b - a for a, b in sp)
         lanes[str(tid)] = {
             "name": str(tid),
-            "events": len(evs),
+            "events": len(frames),
             "distinct": len(names),
             "ts_min": min(ts) if ts else 0,
-            "ts_max": max(ts) if ts else 0,
-            "first_ev": [evs[0]["name"], evs[0].get("ts", 0)] if evs else ["", 0],
-            "last_ev": [evs[-1]["name"], evs[-1].get("ts", 0)] if evs else ["", 0],
-            "top": [[n, c] for n, c in top],
+            "ts_max": window,
+            "first_ev": [frames[0]["name"], frames[0].get("ts", 0)] if frames else ["", 0],
+            "last_ev": [frames[-1]["name"], frames[-1].get("ts", 0)] if frames else ["", 0],
+            "top": [[n, c] for n, c in sorted(names.items(), key=lambda kv: -kv[1])[:5]],
+            "match": {p: sum(c for n, c in names.items() if p in n)
+                      for p in MODEL_FRAMES if any(p in n for n in names)},
+            "model_time_pct": 100.0 * tot(model_spans) / window if window else 0.0,
+            "idle_time_pct": 100.0 * tot(idle_spans) / window if window else 0.0,
+            "model_pct_per_bucket": _pct_per_bucket(model_spans, window, TIMELINE_BUCKETS),
+            "model_last": model_last,
         }
-    return {"trace": trace_label, "lanes": lanes}
+        ends[str(tid)] = model_last
+
+    span = max((l["ts_max"] for l in lanes.values()), default=0)
+    apart = (max(ends.values()) - min(ends.values())) if len(ends) > 1 else 0
+    busy_ok = all(l["model_time_pct"] > 1.0 for l in lanes.values())
+    together_ok = span > 0 and (100.0 * apart / span) < 5.0
+    failures = []
+    if not busy_ok:
+        failures.append("a lane recorded almost no model work")
+    if not together_ok:
+        failures.append("the lanes' model work did not stop together")
+    return {
+        "trace": trace_label,
+        "lanes": lanes,
+        "ends_together_s": apart / 40e6,
+        "ends_together_pct": (100.0 * apart / span) if span else 0.0,
+        "gates": {"busy_ok": busy_ok, "ends_together_ok": together_ok, "failures": failures},
+    }
 
 
 def decode_capture(lanes: list[Path] | list[str], elf: str | Path,
@@ -1445,6 +1560,8 @@ def _feedback_text(system: str) -> str:
 def show_model_inputs(run: str | Path) -> None:
     """What each call's system prompt held besides ModelBlaster's own instructions, and
     every prompt and answer, one collapsible entry per call."""
+    if _no_run(run, "read"):
+        return
     import html
     calls = _calls(run)
     if not calls:
@@ -1504,6 +1621,8 @@ def _kernel_file(run: Path):
 def show_llm_kernel(run: str | Path, around: str = "", lines: int = 24) -> None:
     """The kernel the model wrote, as it was compiled, opened on the loop that uses the MBP.
     The lines that call it are marked with >>."""
+    if _no_run(run, "read"):
+        return
     src = _kernel_file(Path(run))
     if src is None:
         print(f"no kernel source under {run}")
@@ -1521,6 +1640,8 @@ def show_llm_kernel(run: str | Path, around: str = "", lines: int = 24) -> None:
 
 def show_on_accelerator(run: str | Path) -> None:
     """The evidence that the kernel ran on the MBP, from the images the board ran."""
+    if _no_run(run, "read"):
+        return
     b = _board(run)
     if not b:
         print(f"no board run in {Path(run).name}: it was scored on spike alone")

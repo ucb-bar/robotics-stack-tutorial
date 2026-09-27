@@ -1366,17 +1366,24 @@ lab.show_lane_table(lanes)''')
 md("""Compare how much of the capture window each hart spends in model functions:
 
 """ + fence(
-    "pid 0  hart 0 (BIG, MBP) signdet_live\n"
-    "    258,393 events, 179 distinct frames\n"
-    "    in the model  22.4% of the window, spin/console/idle  53.9%\n"
-    "pid 1  hart 1 (LITTLE, scalar) kws_live\n"
-    "    109,712 events, 103 distinct frames\n"
-    "    in the model  75.8% of the window, spin/console/idle   6.1%\n\n"
-    "model work on the two lanes ends 0.10 s apart = 0.7% of the window\n"
+    "pid 0  0\n"
+    "    148,268 events, 179 distinct frames\n"
+    "    in the model  16.9% of the window, spin/console/idle  78.0%\n"
+    "pid 1  1\n"
+    "     67,371 events, 103 distinct frames\n"
+    "    in the model  74.4% of the window, spin/console/idle  19.5%\n\n"
+    "model work on the two lanes ends 0.35 s apart = 2.6% of the window\n"
     "checks: busy_ok pass, ends_together_ok pass -- 0 failures") + """
 
-Both lanes share a 13.309-second window from reset, containing 368,105 events. The
-trace records encoder stop times 94 and 248 cycles from the end of that window.
+Your percentages will differ from these. Both harts share one wall clock, so what to read
+is the SHAPE rather than the numbers: hart 0 spends most of the window idle, because
+SignDetLite finishes a frame and waits, while hart 1 stays inside the model almost the
+whole time. The two checks say whether each lane recorded real model work and whether the
+two stopped together.
+
+The two figures do not sum to 100%: the rest is work that is neither the model nor idle --
+driving the display, the I2C bus, the console. Idle here means the scheduler's idle frame
+with no model frame inside it, which is why it can be read next to the model share at all.
 The next cell plots model activity over time.""")
 code("lab.lane_timeline_figure(lanes)")
 md("""Each point shows the fraction of a time bucket spent inside an `mb_pext_conv` call.

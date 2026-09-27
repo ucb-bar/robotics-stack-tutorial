@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-27T10:33:01Z",
+  "generated_at": "2026-09-27T14:46:10Z",
   "generated_by": "content_validate.py",
-  "source_commit": "87e0daae10f1",
-  "note": "Unit 3 decodes your own capture; Unit 5 measures your board; Unit 4 readers explain a missing run",
+  "source_commit": "e7e53c621d46",
+  "note": "Unit 3 decodes and summarises your own capture; Unit 4 readers explain a missing run",
   "files": [
     {
       "path": "work/.backend/ospi-camera/README.md",
@@ -192,16 +192,16 @@
     },
     {
       "path": "work/iiswc_lab.py",
-      "bytes": 115666,
-      "sha256": "671fc367b76fbfe456522385cf3c5cd9fc6c8fd1ec6b45906498ce520ac81927"
+      "bytes": 120747,
+      "sha256": "9cfba971a0c8db32659916e110eeb8fe6d5d613e9b07a9979c7da89fc233c203"
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 123723,
-      "sha256": "114db6b9af1134b56c629b4579a2d72e3188dffd49a73cc27b9be51c0d14fc8f",
+      "bytes": 124210,
+      "sha256": "1c589164361d885af455ff3c3f72462913a92b81232558488e8bdb8899da062c",
       "cells": 178,
       "nbformat": 4,
-      "source_chars": 87099,
+      "source_chars": 87523,
       "schema_checked": true
     },
     {
@@ -211,8 +211,8 @@
     },
     {
       "path": "work/tools/build_notebook.py",
-      "bytes": 96722,
-      "sha256": "f49d1f0f1beadca056203ee5660d9109b925efa25cb3b29bd47fea8651d59c24"
+      "bytes": 97146,
+      "sha256": "5f518e0170fa091be1e65b5658135d1ac2555ff988fdaa002b210082fb29bbbc"
     }
   ],
   "repo": {
