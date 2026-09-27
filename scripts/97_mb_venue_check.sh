@@ -67,7 +67,13 @@ field() { grep -a -o -E "$2" "$T/$1.log" | head -1; }
 
 step "1/6  this seat, its board and the LLM key  (mb doctor)"
 run doctor "$MB" doctor
-if has doctor 'ready: run'; then rec PASS "mb doctor" "$(cat $T/doctor.s)" "$(field doctor 'board [a-z0-9-]+ answers' || true)"
+# Each board belongs to one seat (pynq-N to seat N): a board answering on another seat's tunnel
+# port would run this seat's kernels and another attendee's at once.
+bd="$(grep -a -o -E 'board pynq-[0-9]+ answers' "$T/doctor.log" | grep -o -E '[0-9]+' | head -1)"
+st="$(ls "$HOME"/work/THIS-IS-SEAT-*.txt 2>/dev/null | grep -o -E '[0-9]+' | tail -1)"
+if [ -n "$bd" ] && [ -n "$st" ] && [ "$bd" != "$st" ]; then
+  rec FAIL "mb doctor" "$(cat $T/doctor.s)" "board pynq-$bd answers on seat $st: it belongs to seat $bd"
+elif has doctor 'ready: run'; then rec PASS "mb doctor" "$(cat $T/doctor.s)" "$(field doctor 'board [a-z0-9-]+ answers' || true)"
 else rec FAIL "mb doctor" "$(cat $T/doctor.s)" "$(grep -a -E 'FAIL' "$T/doctor.log" | head -2 | tr -s ' ' | tr '\n' ';')"; fi
 
 step "2/6  a replayed LLM kernel on the FPGA  (mb go maxpool2d_s8 --replay)"
@@ -105,8 +111,8 @@ import json, iiswc_lab as l
 nb = json.load(open('iiswc_tutorial.ipynb'))
 src = [''.join(c['source']) for c in nb['cells']]
 assert any('## Unit 4 ' in s for s in src) and any('lab.mb_optimize(' in s for s in src)
-l.check_max8([1]*8, [2]*8, [2]*8); l.mb_recorded_run('llm')") >/dev/null 2>&1; then
-  rec PASS "Unit 4 of the tutorial notebook" "0" "~/work: Unit 4 is there, its helpers load, the recorded run unpacks"
+l.check_max8([1]*8, [2]*8, [2]*8); l.mb_preflight") >/dev/null 2>&1; then
+  rec PASS "Unit 4 of the tutorial notebook" "0" "~/work: Unit 4 is there and its helpers load"
 else rec FAIL "Unit 4 of the tutorial notebook" "0" "no Unit 4 in $W/iiswc_tutorial.ipynb, or iiswc_lab.py does not load in $PYJ (is the seat content applied?)"; fi
 
 if [ "$FULL" = 1 ]; then

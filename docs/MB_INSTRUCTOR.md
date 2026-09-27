@@ -106,7 +106,7 @@ This prints one PASS/FAIL line per seat, with its log.
 | problem | what still works |
 |---|---|
 | Bedrock down, or the key past its cutoff | Handled automatically. `mb go` notices, falls back to replaying a verified kernel from a recorded run, and says so. Spike and the board still run for real, and `mb try` needs no LLM |
-| a board or its tunnel down | Handled automatically. `mb go` falls back to spike only and says so, and `mb doctor` says why. Unit 4 of the tutorial notebook reads a recorded run on a real board |
+| a board or its tunnel down | Handled automatically. `mb go` falls back to spike only and says so, and `mb doctor` says why. Unit 4 of the tutorial notebook waits up to 2 minutes for the board first, then says the run is on spike only |
 | a kernel that traps or never ends | stopped on spike within 3 minutes and never sent to the board |
 | the router's name service, when `mb` runs on the board | `MB_SEAT=<seat IP> ~/mb` |
 | a seat not set up | `mb` says so and names `96_seat_mb_setup.sh` |

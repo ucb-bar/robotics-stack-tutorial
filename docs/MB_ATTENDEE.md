@@ -8,7 +8,7 @@ AWS seat (see `docs/MB_INSTRUCTOR.md`).
 Open JupyterLab in your browser, using the address and passphrase the instructors gave you, open
 `iiswc_tutorial.ipynb` and go to **Unit 4 · Optimize a kernel with a language model**. It walks through
 everything on this page one cell at a time and leaves a few blanks for you to fill in. If your seat
-cannot run the optimizer, Unit 4 reads a recorded run on a real board instead, and says so.
+cannot run the optimizer, Unit 4 says what is missing; ask an instructor.
 
 You can also open a terminal (File → New → Terminal) and use the commands below. Your board keeps a
 tunnel open to this seat, so the commands run on the seat and drive your FPGA from there.
