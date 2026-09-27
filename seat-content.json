@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "generated_at": "2026-09-27T14:46:10Z",
+  "generated_at": "2026-09-27T17:28:30Z",
   "generated_by": "content_validate.py",
-  "source_commit": "e7e53c621d46",
-  "note": "Unit 3 decodes and summarises your own capture; Unit 4 readers explain a missing run",
+  "source_commit": "189c07b2328f4c12b03cc6bb169c43e5b03498fb+working-tree",
+  "note": "Unit 4: live runs only; the lab follows ~/tut",
   "files": [
     {
       "path": "work/.backend/ospi-camera/README.md",
@@ -192,16 +192,16 @@
     },
     {
       "path": "work/iiswc_lab.py",
-      "bytes": 120747,
-      "sha256": "9cfba971a0c8db32659916e110eeb8fe6d5d613e9b07a9979c7da89fc233c203"
+      "bytes": 121372,
+      "sha256": "ff8360ca692920d30a7c265a0fa4002c299b9ac56ede5877787131afb67bc0b5"
     },
     {
       "path": "work/iiswc_tutorial.ipynb",
-      "bytes": 124210,
-      "sha256": "1c589164361d885af455ff3c3f72462913a92b81232558488e8bdb8899da062c",
+      "bytes": 124327,
+      "sha256": "4397349f9daec1d5241580a2806385842a64cb62fc2be15b5a9a70dcc3d212f2",
       "cells": 178,
       "nbformat": 4,
-      "source_chars": 87523,
+      "source_chars": 87640,
       "schema_checked": true
     },
     {
@@ -211,8 +211,8 @@
     },
     {
       "path": "work/tools/build_notebook.py",
-      "bytes": 97146,
-      "sha256": "5f518e0170fa091be1e65b5658135d1ac2555ff988fdaa002b210082fb29bbbc"
+      "bytes": 97263,
+      "sha256": "b923eca7c49655d83a39fa940f9445c20b8ca852ae8b46ba6c0b4fac3784b6da"
     }
   ],
   "repo": {

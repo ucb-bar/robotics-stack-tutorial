@@ -1099,7 +1099,6 @@ MB_REPO = Path.home() / "iiswc-tutorial"
 MB_RUNS = MB_REPO / "out" / "mb_lab"
 MB = MB_REPO / "fpga/pynq-z2/host/mb"
 MB_KERNELS = Path.home() / "work/modelblaster-llm-lab/your-kernel"   # where `mb start` copies to
-MB_RECORDED = "mb_recorded_runs.tar.gz"     # in assets/: a live LLM run and a `mb try`, both on a board
 MB_GOAL = 10.0                              # cycles per output to aim for in 4.9
 _NO_ANSI = __import__("re").compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
@@ -1188,12 +1187,47 @@ def check_max8(row0, row1, prediction):
     return _lanes_figure(rows, marks, "Your prediction: green lanes are right, red ones are not")
 
 
+TUT = Path.home() / "tut"
+MB_SYNC_EXCLUDES = ("/out/", ".git", "/*.local.md", "/board.conf", "/secrets/", "__pycache__",
+                    "/.board.lock*", "/zephyr-chipyard-sw/", "/third_party/")   # the lab uses ~/mb-tools
+
+
+def mb_sync(src: Path = TUT, dst: Path | None = None) -> bool:
+    """Bring the lab in ~/iiswc-tutorial up to the repo commit this seat's content pins.
+
+    ~/tut is advanced to that commit by seat-content.sh on every publish; ~/iiswc-tutorial is
+    the copy the lab runs from (scripts/96_seat_mb_setup.sh made it). Copying one into the
+    other when the pin moves means a publish updates the lab on every seat, with no per-seat
+    step. Skipped while a lab run is in progress, so a running script is never rewritten.
+    """
+    dst = dst or MB_REPO
+    if not (src / "scripts/95_mb_kernel_llm.sh").exists() or not dst.is_dir():
+        return False
+    head = subprocess.run(["git", "-C", str(src), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    stamp = dst / ".synced-from"
+    if not head or (stamp.exists() and stamp.read_text().strip() == head):
+        return False
+    busy = subprocess.run(["pgrep", "-u", str(os.getuid()), "-f", "95_mb_kernel_llm[.]sh"],
+                          capture_output=True).returncode == 0
+    if busy:
+        return False
+    cmd = ["rsync", "-a", "--delete", *[f"--exclude={x}" for x in MB_SYNC_EXCLUDES],
+           f"{src}/", f"{dst}/"]
+    if subprocess.run(cmd, capture_output=True).returncode != 0:
+        return False
+    stamp.write_text(head + "\n")
+    print(f"the lab on this seat now matches the repo at {head[:12]}")
+    return True
+
+
 def mb_preflight() -> bool:
     """What this seat needs to run the optimizer live, and which pieces it has.
 
     Five separate things, because they fail separately and the message that says
     "not provisioned" is useless when only one of them is missing.
     """
+    mb_sync()
     checks = [
         ("the model key", Path.home() / ".config/iiswc/bedrock.env",
          "an instructor runs scripts/93_bedrock_key.sh distribute"),
@@ -1219,25 +1253,9 @@ def mb_preflight() -> bool:
         print("       is it on and on the WiFi? `mb doctor` in a terminal says why; a run waits for it")
     print()
     print("This seat can run the optimizer." if ready else
-          "This seat cannot run the optimizer live. The cells below read a recorded run\n"
-          "instead, and every number in this unit came from one.")
+          "This seat cannot run the optimization loop until the NO lines above are fixed.\n"
+          "Ask an instructor.")
     return ready
-
-
-def mb_recorded_run(kind: str = "llm") -> Path:
-    """A finished run shipped with this notebook: `llm` (a live LLM run) or `try` (the
-    solution kernel run with `mb try`), both measured on a board.  Unpacked once."""
-    import tarfile
-    dest = Path.home() / "work" / ".mb_recorded"
-    if not dest.exists():
-        src = Path(MB_RECORDED) if Path(MB_RECORDED).exists() else ASSETS / MB_RECORDED
-        with tarfile.open(src) as tar:
-            tar.extractall(dest, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
-    for p in sorted(p for p in dest.iterdir() if (p / "run.json").exists()):
-        mine = bool(json.loads((p / "run.json").read_text()).get("kernel_file"))
-        if mine == (kind == "try"):
-            return p
-    raise FileNotFoundError(f"no recorded {kind} run in {dest}")
 
 
 def mb_latest_run(name: str = "") -> Path | None:
@@ -1404,11 +1422,11 @@ def _mb(words: list[str], timeout: int) -> Path | None:
     import queue
     import threading
     from IPython.display import Pretty, display
+    mb_sync()
     status = display(Pretty("checking your board ..."), display_id=True)
     if BOARD_KEY.exists() and not _wait_for_board(status):
         print(f"YOUR BOARD DID NOT ANSWER IN {MB_BOARD_WAIT} s: this run is on spike only and nothing "
-              "runs on the FPGA.\n`mb doctor` in a terminal says why; the verdict also shows a run "
-              "recorded on a real board.")
+              "runs on the FPGA.\n`mb doctor` in a terminal says why; run the cell again once it answers.")
     t0 = time.time()
     proc = subprocess.Popen([str(MB), *words], cwd=MB_REPO, env=_clean_env(), text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
@@ -1462,23 +1480,22 @@ def _mb(words: list[str], timeout: int) -> Path | None:
 
 
 def mb_optimize(ready: bool, op: str = "maxpool2d_s8", rounds: int = 2, beam: int = 2,
-                expansions: int = 2, max_calls: int = 8) -> Path:
-    """One optimization, with your board in the loop, or the recorded one when this seat
-    cannot run it.  It waits up to MB_BOARD_WAIT seconds for the board; `mb` itself falls
-    back to a recorded kernel if the model does not answer, and to spike alone if the
-    board does not, and says so."""
+                expansions: int = 2, max_calls: int = 8) -> Path | None:
+    """One optimization, with your board in the loop.  It waits up to MB_BOARD_WAIT seconds
+    for the board; `mb` itself falls back to a recorded kernel if the model does not
+    answer, and to spike alone if the board does not, and says so.  A seat that is not
+    set up gets no run, not a recording in its place."""
     if not ready:
-        run = mb_recorded_run("llm")
-        print(f"reading the recorded run {run.name}")
-        from IPython.display import display
-        display(_png(optimizer_figure(run)))
-        return run
+        print("no run: this seat is not set up for the optimization loop (4.3 lists what is\n"
+              "missing). Ask an instructor.")
+        return None
     return _mb(["go", op, "--rounds", str(rounds), "--beam", str(beam),
                 "--expansions", str(expansions), "--max-calls", str(max_calls)], timeout=3600)
 
 
 def mb_start(op: str = "maxpool2d_s8") -> Path:
     """Copy the starting kernel (ModelBlaster's reference) to a file you can edit."""
+    mb_sync()
     r = sh(f"{MB} start {op}", timeout=60, quiet=True)
     path = MB_KERNELS / f"{op}.c"
     print(next((l.strip() for l in _NO_ANSI.sub("", r.stdout).splitlines() if "<-" in l), r.stdout.strip()))
@@ -1693,9 +1710,7 @@ def show_board_verdict(run: str | Path) -> None:
                 print(f"{name:<10}{a['cycles']:>14,}{a.get('cycles_per_output') or 0:>13.1f}"
                       f"{be['cycles'] / a['cycles']:>13.2f}x   {note}")
             print("\nspike estimate only: it does not model memory timing, so the board usually measures less")
-        rec = mb_recorded_run("try" if j.get("kernel_file") else "llm")
-        print(f"\nmeasured on a real board, the recorded run {rec.name}:\n")
-        show_board_verdict(rec)
+        print("for the FPGA numbers, run the cell again once `mb doctor` says your board answers")
         return
     print(f"{run.name}: {kind}, measured on {b.get('board', '?')} ({b.get('magic', '?')}, "
           f"{(b.get('fclk_hz') or 0) / 1e6:.0f} MHz)\n")

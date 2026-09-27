@@ -1471,11 +1471,11 @@ md("""### 4.3 Check the optimizer setup
 
 The next cell checks for five required files: the model credentials, the development
 environment settings, the Spike build with MBP support, the optimizer script, and the
-key your instance uses to reach the board.""")
+key your instance uses to reach the board. It also checks that your board answers.""")
 code('''ready = lab.mb_preflight()''')
-md("""Check that all five lines say `yes`. If any says `NO`, the next cell skips the
-optimization and reads a run recorded on a real board instead. Ask the instructor for
-help with the missing setup.""")
+md("""Check that all six lines say `yes`. If any of the first five says `NO`, the next cell
+cannot run the optimization. Ask the instructor for help with the missing setup. If only
+the board line says `NO`, check that your board is on; the run waits for it.""")
 
 md("""### 4.4 Run the search
 
@@ -1493,8 +1493,8 @@ Check the path after `run:` to see which run the remaining cells will inspect.
 <summary>If the model or the board does not answer</summary>
 
 If the model does not answer, the run replays a kernel the model wrote in an earlier
-run. If the board does not answer, the run measures on Spike only. The cell prints
-which fallback it used.
+run. If the board does not answer within two minutes, the run measures on Spike only.
+The cell prints which fallback it used.
 
 </details>""")
 
